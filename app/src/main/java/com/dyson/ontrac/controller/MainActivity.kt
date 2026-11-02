@@ -29,15 +29,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dyson.ontrac.controller.logging.DysonLogger
 import com.dyson.ontrac.controller.settings.ThemePreferences
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.coroutines.resume
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var themePrefs: ThemePreferences
     private var bluetoothGatt: BluetoothGatt? = null
     private val descriptorQueue: Queue<BluetoothGattDescriptor> = ConcurrentLinkedQueue()
+    private var pendingWriteContinuation: CancellableContinuation<Boolean>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,6 +109,7 @@ class MainActivity : ComponentActivity() {
         onDynamicColorChanged: (Boolean) -> Unit,
         onOledBlackChanged: (Boolean) -> Unit
     ) {
+        val scope = rememberCoroutineScope()
         var statusText by remember { mutableStateOf("Disconnected") }
         val logText by DysonLogger.logFlow.collectAsState()
 
@@ -195,6 +200,12 @@ class MainActivity : ComponentActivity() {
 
                 override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
                     DysonLogger.i("TX_ACK", "Write Ack for ${characteristic.uuid} | status=$status")
+                    pendingWriteContinuation?.let { cont ->
+                        pendingWriteContinuation = null
+                        if (cont.isActive) {
+                            cont.resume(status == BluetoothGatt.GATT_SUCCESS || status == 3)
+                        }
+                    }
                 }
             }
         }
@@ -318,11 +329,23 @@ class MainActivity : ComponentActivity() {
 
             Button(
                 onClick = {
-                    val payload = DysonProtocolEngine.buildCustomEqPayload(
-                        band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
-                    )
-                    sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
-                    sendDysonCommand(DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
+                    scope.launch {
+                        // Step 1: Switch preset to custom mode (0x03) sequentially
+                        sendDysonCommandSequential(
+                            DysonProtocolEngine.COMMAND_CHAR_UUID,
+                            DysonProtocolEngine.buildPresetEqPayload(0x03)
+                        )
+
+                        // Step 2: Push 5-band array to custom EQ characteristic
+                        val payload = DysonProtocolEngine.buildCustomEqPayload(
+                            band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
+                        )
+                        sendDysonCommandSequential(
+                            DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID,
+                            payload
+                        )
+                        DysonLogger.i("EQ", "Successfully applied custom 5-band EQ profile!")
+                    }
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -337,12 +360,20 @@ class MainActivity : ComponentActivity() {
                     band3 = gains[2]
                     band4 = gains[3]
                     band5 = gains[4]
-                    val payload = DysonProtocolEngine.buildCustomEqPayload(
-                        gains[0].toInt(), gains[1].toInt(), gains[2].toInt(), gains[3].toInt(), gains[4].toInt()
-                    )
-                    sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
-                    sendDysonCommand(DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
-                    DysonLogger.i("AUDIOPHILE", "Applied target curve: $name")
+                    scope.launch {
+                        sendDysonCommandSequential(
+                            DysonProtocolEngine.COMMAND_CHAR_UUID,
+                            DysonProtocolEngine.buildPresetEqPayload(0x03)
+                        )
+                        val payload = DysonProtocolEngine.buildCustomEqPayload(
+                            gains[0].toInt(), gains[1].toInt(), gains[2].toInt(), gains[3].toInt(), gains[4].toInt()
+                        )
+                        sendDysonCommandSequential(
+                            DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID,
+                            payload
+                        )
+                        DysonLogger.i("AUDIOPHILE", "Successfully applied target curve: $name")
+                    }
                 },
                 onAncIntensityChanged = { percent ->
                     val payload = DysonProtocolEngine.buildAncIntensityPayload(percent)
@@ -609,6 +640,44 @@ class MainActivity : ComponentActivity() {
             desc.value = valBytes
             @Suppress("DEPRECATION")
             gatt.writeDescriptor(desc)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun sendDysonCommandSequential(
+        charUuid: UUID,
+        payload: ByteArray
+    ): Boolean {
+        val gatt = bluetoothGatt
+        if (gatt == null) {
+            DysonLogger.e("CMD", "ERROR: Not connected to any device.")
+            return false
+        }
+
+        var foundChar: BluetoothGattCharacteristic? = null
+        for (service in gatt.services) {
+            val ch = service.getCharacteristic(charUuid)
+            if (ch != null) {
+                foundChar = ch
+                break
+            }
+        }
+
+        if (foundChar == null) {
+            DysonLogger.e("CMD", "ERROR: Characteristic $charUuid not found on any service.")
+            return false
+        }
+
+        return suspendCancellableCoroutine { continuation ->
+            pendingWriteContinuation = continuation
+            val success = DysonProtocolEngine.writeGattPayload(gatt, foundChar, payload)
+            DysonLogger.i("CMD", "TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Initiated: $success")
+            if (!success) {
+                pendingWriteContinuation = null
+                if (continuation.isActive) {
+                    continuation.resume(false)
+                }
+            }
         }
     }
 
