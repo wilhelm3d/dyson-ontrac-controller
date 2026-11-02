@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.dyson.ontrac.controller.logging.DysonLogger
 import com.dyson.ontrac.controller.settings.ThemePreferences
+import com.dyson.ontrac.controller.telemetry.DysonBatteryReader
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -220,8 +221,37 @@ class MainActivity : ComponentActivity() {
                     processNextDescriptor(gatt)
                 }
 
+                @Deprecated("Deprecated in API 33")
+                @Suppress("DEPRECATION")
+                override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        if (characteristic.uuid == DysonBatteryReader.BATTERY_STATUS_CHAR_UUID) {
+                            val parsedInfo = DysonBatteryReader.parseBatteryPayload(characteristic.value ?: byteArrayOf())
+                            DysonLogger.i("BATTERY", "Telemetry Read -> $parsedInfo")
+                        }
+                    } else {
+                        DysonLogger.e("BATTERY", "Battery read failed with status: $status")
+                    }
+                }
+
+                override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        if (characteristic.uuid == DysonBatteryReader.BATTERY_STATUS_CHAR_UUID) {
+                            val parsedInfo = DysonBatteryReader.parseBatteryPayload(value)
+                            DysonLogger.i("BATTERY", "Telemetry Read -> $parsedInfo")
+                        }
+                    } else {
+                        DysonLogger.e("BATTERY", "Battery read failed with status: $status")
+                    }
+                }
+
                 override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-                    DysonLogger.i("RX_NOTIF", "Characteristic ${characteristic.uuid} -> ${value.toHex()}")
+                    if (characteristic.uuid == DysonBatteryReader.BATTERY_STATUS_CHAR_UUID) {
+                        val parsedInfo = DysonBatteryReader.parseBatteryPayload(value)
+                        DysonLogger.i("BATTERY_NOTIF", parsedInfo)
+                    } else {
+                        DysonLogger.i("RX_NOTIF", "Characteristic ${characteristic.uuid} -> ${value.toHex()}")
+                    }
                 }
 
                 override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
@@ -292,6 +322,17 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text("Auto-Reconnect Saved Device")
+            }
+
+            Button(
+                onClick = {
+                    bluetoothGatt?.let { gatt ->
+                        DysonBatteryReader.requestBatteryRead(gatt)
+                    } ?: DysonLogger.e("BATTERY", "Not connected to GATT server")
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Read Battery Telemetry")
             }
 
             HorizontalDivider()
