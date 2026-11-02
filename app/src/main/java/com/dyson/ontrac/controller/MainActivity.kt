@@ -5,465 +5,367 @@ import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import java.util.UUID
-import kotlin.math.roundToInt
-
-// --- UUIDs & Command Definitions extracted from Dyson APK ---
-val DYSON_SERVICE_UUID: UUID = UUID.fromString("2DD10020-1C37-452D-8979-D1B4A787D0A4")
-val DYSON_CMD_CHAR_UUID: UUID = UUID.fromString("2DD10021-1C37-452D-8979-D1B4A787D0A4")
-val DYSON_CUSTOM_EQ_UUID: UUID = UUID.fromString("2DD12007-1C37-452D-8979-D1B4A787D0A4")
-
-// Payload mappings (Header [Command ID, 64] + Mode Byte)
-val CMD_ANC_ISOLATION = byteArrayOf(0x0A, 0x40, 0x00)
-val CMD_ANC_TRANSPARENCY = byteArrayOf(0x0A, 0x40, 0x02)
-val CMD_ANC_OFF = byteArrayOf(0x0A, 0x40, 0x03)
-
-// EQ Presets
-val CMD_EQ_MODE_CUSTOM = byteArrayOf(0x0B, 0x40, 0x03)
-
-// Nothing Style Colors
-val NothingBlack = Color(0xFF000000)
-val NothingWhite = Color(0xFFFFFFFF)
-val NothingRed = Color(0xFFEA3323)
-val NothingGray = Color(0xFF333333)
+import java.util.*
+import java.util.concurrent.ConcurrentLinkedQueue
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var bleManager: DysonBleManager
-
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val allGranted = permissions.entries.all { it.value }
-        if (allGranted) {
-            bleManager.startScan()
-        } else {
-            Log.e("BLE", "Permissions denied")
-        }
-    }
+    private var bluetoothGatt: BluetoothGatt? = null
+    private val descriptorQueue: Queue<BluetoothGattDescriptor> = ConcurrentLinkedQueue()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        bleManager = DysonBleManager(this)
-
         setContent {
-            MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = NothingBlack
-                ) {
-                    DashboardScreen(bleManager) { requestBlePermissions() }
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    DysonControllerScreen()
                 }
             }
         }
     }
 
-    private fun requestBlePermissions() {
-        val requiredPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
-        } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-
-        val missingPermissions = requiredPermissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-
-        if (missingPermissions.isEmpty()) {
-            bleManager.startScan()
-        } else {
-            permissionLauncher.launch(missingPermissions.toTypedArray())
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        bleManager.disconnect()
-    }
-}
-
-// --- UI Dashboard ---
-@Composable
-fun DashboardScreen(bleManager: DysonBleManager, onScanClick: () -> Unit) {
-    val connectionState by bleManager.connectionState.collectAsState()
-    
-    // The mapped 5-band compromise of your 6-band profile
-    // Original Band 1 (+2.5dB) -> Bass: +3
-    // Original Band 2 (-2.0dB) -> MidBass: -2
-    // Original Band 3 (+1.5dB) -> Mid: +1
-    // Original Band 4 (-2.5dB) -> MidTreble: -2
-    // Orig Band 5 (-5.5dB) & 6 (+4.0dB) -> Treble: -2 (Compromise to tame sibilance)
-    var eqValues by remember { mutableStateOf(listOf(3, -2, 1, -2, -2)) }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp)
-    ) {
-        Spacer(modifier = Modifier.height(30.dp))
+    @SuppressLint("MissingPermission")
+    @Composable
+    fun DysonControllerScreen() {
+        var statusText by remember { mutableStateOf("Disconnected") }
+        var logText by remember { mutableStateOf("Ready. Connect to your Dyson OnTrac.\n") }
         
-        Text(
-            text = "ONTRAC CTRL",
-            color = NothingWhite,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 2.sp
-        )
+        // Custom 5-Band EQ States (-10 dB to +10 dB)
+        var band1 by remember { mutableStateOf(0f) }
+        var band2 by remember { mutableStateOf(0f) }
+        var band3 by remember { mutableStateOf(0f) }
+        var band4 by remember { mutableStateOf(0f) }
+        var band5 by remember { mutableStateOf(0f) }
 
-        // Status Indicator
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (connectionState.contains("Ready")) NothingRed else NothingGray)
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = connectionState.uppercase(),
-                color = NothingWhite,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
+        fun appendLog(msg: String) {
+            logText = (logText + msg + "\n").takeLast(12000)
+        }
+
+        val permissionLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions()
+        ) { perms ->
+            appendLog("Permissions granted: ${perms.values.all { it }}")
+        }
+
+        LaunchedEffect(Unit) {
+            val perms = mutableListOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
             )
-        }
-
-        Button(
-            onClick = onScanClick,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(0.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = NothingWhite, contentColor = NothingBlack),
-            enabled = connectionState == "Disconnected" || connectionState.contains("Failed")
-        ) {
-            Text("CONNECT", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-        }
-
-        // ANC Controls
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text("NOISE CONTROL", color = NothingWhite, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            val isReady = connectionState == "Ready to send commands"
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { bleManager.sendCommand(CMD_ANC_ISOLATION) },
-                    enabled = isReady,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f)
-                ) { Text("ANC", fontFamily = FontFamily.Monospace, color = NothingWhite) }
-
-                OutlinedButton(
-                    onClick = { bleManager.sendCommand(CMD_ANC_TRANSPARENCY) },
-                    enabled = isReady,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f)
-                ) { Text("TRANS", fontFamily = FontFamily.Monospace, color = NothingWhite) }
-
-                OutlinedButton(
-                    onClick = { bleManager.sendCommand(CMD_ANC_OFF) },
-                    enabled = isReady,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f)
-                ) { Text("OFF", fontFamily = FontFamily.Monospace, color = NothingWhite) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                perms.add(Manifest.permission.BLUETOOTH_SCAN)
+                perms.add(Manifest.permission.BLUETOOTH_CONNECT)
             }
+            permissionLauncher.launch(perms.toTypedArray())
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        val gattCallback = remember {
+            object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        statusText = "Connected (${gatt.device.address}) - Requesting MTU..."
+                        appendLog("ACL/LE Connected. Requesting MTU 251...")
+                        gatt.requestMtu(251)
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        statusText = "Disconnected (status=$status)"
+                        appendLog("Disconnected from GATT server (status=$status)")
+                    }
+                }
 
-        // Equalizer UI
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("EQUALIZER (CUSTOM)", color = NothingWhite, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-                Button(
-                    onClick = { 
-                        // 1. Tell headset to use Custom EQ Profile
-                        bleManager.sendCommand(CMD_EQ_MODE_CUSTOM)
-                        // 2. Upload the 5-band payload
-                        bleManager.sendCustomEq(eqValues) 
-                    },
-                    enabled = connectionState == "Ready to send commands",
-                    shape = RoundedCornerShape(0.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NothingRed, contentColor = NothingWhite),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
-                ) {
-                    Text("APPLY", fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                    appendLog("MTU negotiated: $mtu (status=$status). Discovering services...")
+                    gatt.discoverServices()
+                }
+
+                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        appendLog("Service discovery failed: $status")
+                        return
+                    }
+                    descriptorQueue.clear()
+
+                    appendLog("=== DISCOVERED GATT SERVICES ===")
+                    for (service in gatt.services) {
+                        appendLog("SVC: ${service.uuid}")
+                        for (ch in service.characteristics) {
+                            val p = ch.properties
+                            appendLog("  CHR: ${ch.uuid} [Props: 0x${p.toString(16)}]")
+                            
+                            if ((p and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE)) != 0) {
+                                gatt.setCharacteristicNotification(ch, true)
+                                ch.getDescriptor(DysonProtocolEngine.CCCD_UUID)?.let { desc ->
+                                    descriptorQueue.add(desc)
+                                }
+                            }
+                        }
+                    }
+                    statusText = "Ready | Connected to OnTrac"
+                    processNextDescriptor(gatt)
+                }
+
+                override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                    appendLog("CCCD Subscribed: ${descriptor.characteristic.uuid} (status=$status)")
+                    processNextDescriptor(gatt)
+                }
+
+                override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+                    appendLog("RX Notification: ${value.toHex()}")
+                }
+
+                override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                    appendLog("TX Write Ack: status=$status")
                 }
             }
-            
-            Spacer(modifier = Modifier.height(24.dp))
+        }
 
-            // 5 Band Slider Array
-            Row(
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(12.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Dyson OnTrac Controller + Custom EQ", style = MaterialTheme.typography.titleMedium)
+            Text("Status: $statusText", color = Color(0xFF80CBC4))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                    val adapter = bm.adapter
+                    val target = adapter.bondedDevices.firstOrNull {
+                        val n = it.name?.lowercase() ?: ""
+                        n.contains("ontrac") || n.contains("dyson") || n.contains("wp02")
+                    }
+                    if (target != null) {
+                        appendLog("Connecting via TRANSPORT_LE to: ${target.name} (${target.address})")
+                        bluetoothGatt?.close()
+                        bluetoothGatt = target.connectGatt(
+                            this@MainActivity,
+                            false,
+                            gattCallback,
+                            BluetoothDevice.TRANSPORT_LE
+                        )
+                    } else {
+                        appendLog("No bonded OnTrac found. Scanning BLE...")
+                        startBleScan(adapter, gattCallback, ::appendLog)
+                    }
+                }) {
+                    Text("Connect OnTrac")
+                }
+
+                Button(onClick = {
+                    val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                    startBleScan(bm.adapter, gattCallback, ::appendLog)
+                }) {
+                    Text("Scan BLE")
+                }
+            }
+
+            HorizontalDivider()
+            Text("ANC Control Modes", style = MaterialTheme.typography.labelLarge)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x00), ::appendLog) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Isolation", fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x02), ::appendLog) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Transparency", fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x03), ::appendLog) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("ANC Off", fontSize = 11.sp)
+                }
+            }
+
+            HorizontalDivider()
+            Text("DSP Preset EQ", style = MaterialTheme.typography.labelLarge)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x02), ::appendLog) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Neutral", fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x00), ::appendLog) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Enhanced", fontSize = 11.sp)
+                }
+                Button(
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x01), ::appendLog) },
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Bass Boost", fontSize = 11.sp)
+                }
+            }
+
+            HorizontalDivider()
+            Text("Custom 5-Band Equalizer (-10dB to +10dB)", style = MaterialTheme.typography.labelLarge)
+
+            // Band Sliders
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                EqSliderRow("60Hz", band1) { band1 = it }
+                EqSliderRow("250Hz", band2) { band2 = it }
+                EqSliderRow("1kHz", band3) { band3 = it }
+                EqSliderRow("4kHz", band4) { band4 = it }
+                EqSliderRow("12kHz", band5) { band5 = it }
+            }
+
+            Button(
+                onClick = {
+                    val payload = DysonProtocolEngine.buildCustomEqPayload(
+                        band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
+                    )
+                    // First switch preset EQ to custom mode (0x03) then push array
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03), ::appendLog)
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload, ::appendLog)
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Apply Custom EQ Profile")
+            }
+
+            HorizontalDivider()
+            Text("Diagnostic Console:", style = MaterialTheme.typography.labelLarge)
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                    .height(200.dp)
+                    .background(Color(0xFF121212))
+                    .padding(8.dp)
             ) {
-                val labels = listOf("BASS", "M-BAS", "MID", "M-TRB", "TRB")
-                eqValues.forEachIndexed { index, value ->
-                    NothingVerticalSlider(
-                        value = value,
-                        label = labels[index],
-                        onValueChange = { newVal ->
-                            val mut = eqValues.toMutableList()
-                            mut[index] = newVal
-                            eqValues = mut
-                        }
+                Text(
+                    text = logText,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = Color(0xFF00E676)
+                )
+            }
+        }
+    }
+
+    @Composable
+    fun EqSliderRow(label: String, value: Float, onValueChanged: (Float) -> Unit) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(label, modifier = Modifier.width(55.dp), fontSize = 12.sp)
+            Slider(
+                value = value,
+                onValueChange = onValueChanged,
+                valueRange = -10f..10f,
+                steps = 19,
+                modifier = Modifier.weight(1f)
+            )
+            Text("${value.toInt()} dB", modifier = Modifier.width(45.dp), fontSize = 11.sp)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startBleScan(
+        adapter: BluetoothAdapter,
+        gattCallback: BluetoothGattCallback,
+        appendLog: (String) -> Unit
+    ) {
+        val scanner = adapter.bluetoothLeScanner ?: return
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+        scanner.startScan(null, settings, object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val name = result.device.name ?: result.scanRecord?.deviceName ?: ""
+                if (name.contains("OnTrac", true) || name.contains("Dyson", true) || name.contains("WP02", true)) {
+                    scanner.stopScan(this)
+                    appendLog("Found target: $name (${result.device.address}). Connecting...")
+                    bluetoothGatt?.close()
+                    bluetoothGatt = result.device.connectGatt(
+                        this@MainActivity,
+                        false,
+                        gattCallback,
+                        BluetoothDevice.TRANSPORT_LE
                     )
                 }
             }
+        })
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun processNextDescriptor(gatt: BluetoothGatt) {
+        val desc = descriptorQueue.poll() ?: return
+        val ch = desc.characteristic
+        val valBytes = if ((ch.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) {
+            BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+        } else {
+            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            gatt.writeDescriptor(desc, valBytes)
+        } else {
+            @Suppress("DEPRECATION")
+            desc.value = valBytes
+            @Suppress("DEPRECATION")
+            gatt.writeDescriptor(desc)
         }
     }
-}
 
-// Minimalist Vertical Slider mimicking the "Nothing" brand aesthetics
-@Composable
-fun NothingVerticalSlider(
-    value: Int,
-    label: String,
-    onValueChange: (Int) -> Unit
-) {
-    // Range is typically -10 to +10 dB for firmware DSPs.
-    val minDb = -10
-    val maxDb = 10
-    
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxHeight()
+    @SuppressLint("MissingPermission")
+    private fun sendDysonCommand(
+        serviceUuid: UUID,
+        charUuid: UUID,
+        payload: ByteArray,
+        appendLog: (String) -> Unit
     ) {
-        Text(
-            text = "${if (value > 0) "+" else ""}$value",
-            color = NothingWhite,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
-        )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .width(40.dp)
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        // rough calculation for drag 
-                        val step = size.height / (maxDb - minDb)
-                        val delta = (dragAmount.y / step).roundToInt()
-                        val newVal = (value - delta).coerceIn(minDb, maxDb)
-                        onValueChange(newVal)
-                    }
-                }
-        ) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val trackWidth = 4.dp.toPx()
-                val sliderHeight = 12.dp.toPx()
-                val centerY = size.height / 2f
-                
-                // Draw Track
-                drawRoundRect(
-                    color = NothingGray,
-                    topLeft = Offset((size.width - trackWidth) / 2f, 0f),
-                    size = Size(trackWidth, size.height),
-                    cornerRadius = CornerRadius(trackWidth/2, trackWidth/2)
-                )
-                
-                // Draw Zero Line
-                drawLine(
-                    color = NothingWhite.copy(alpha = 0.5f),
-                    start = Offset(0f, centerY),
-                    end = Offset(size.width, centerY),
-                    strokeWidth = 2.dp.toPx()
-                )
-                
-                // Calculate Handle Position
-                val range = maxDb - minDb
-                val percentage = 1f - ((value - minDb).toFloat() / range.toFloat())
-                val handleY = (percentage * size.height).coerceIn(sliderHeight/2, size.height - sliderHeight/2)
-                
-                // Draw Handle
-                drawRoundRect(
-                    color = NothingRed,
-                    topLeft = Offset(4.dp.toPx(), handleY - sliderHeight / 2f),
-                    size = Size(size.width - 8.dp.toPx(), sliderHeight),
-                    cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
-                )
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = label,
-            color = NothingWhite.copy(alpha = 0.6f),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp
-        )
-    }
-}
-
-// --- BLE Engine ---
-@SuppressLint("MissingPermission")
-class DysonBleManager(private val context: Context) {
-    private val bluetoothAdapter: BluetoothAdapter? =
-        (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
-
-    private var bluetoothGatt: BluetoothGatt? = null
-    
-    private val _connectionState = MutableStateFlow("Disconnected")
-    val connectionState: StateFlow<String> = _connectionState.asStateFlow()
-
-    private val scanCallback = object : ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val device = result.device
-            val deviceName = try { device.name } catch (e: SecurityException) { null } ?: ""
-            if (deviceName.contains("OnTrac", ignoreCase = true) || deviceName.contains("N571", ignoreCase = true)) {
-                _connectionState.value = "Found ${deviceName}, Connecting..."
-                stopScan()
-                connectToDevice(device)
-            }
-        }
-    }
-
-    private val gattCallback = object : BluetoothGattCallback() {
-        override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    _connectionState.value = "Connected. Discovering Services..."
-                    bluetoothGatt = gatt
-                    gatt.discoverServices()
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    _connectionState.value = "Disconnected"
-                    gatt.close()
-                }
-            } else {
-                _connectionState.value = "Connection Failed (Status $status)"
-                gatt.close()
-            }
-        }
-
-        override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val service = gatt.getService(DYSON_SERVICE_UUID)
-                if (service != null) {
-                    _connectionState.value = "Ready to send commands"
-                } else {
-                    _connectionState.value = "Dyson Service Not Found"
-                }
-            }
-        }
-    }
-
-    fun startScan() {
-        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) {
-            _connectionState.value = "Bluetooth is disabled"
+        val gatt = bluetoothGatt
+        if (gatt == null) {
+            appendLog("ERROR: Not connected to any device.")
             return
         }
-        _connectionState.value = "Scanning for OnTrac..."
-        bluetoothAdapter.bluetoothLeScanner?.startScan(scanCallback)
-    }
-
-    private fun stopScan() {
-        bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-    }
-
-    private fun connectToDevice(device: BluetoothDevice) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            device.connectGatt(context, false, gattCallback)
+        val service = gatt.getService(serviceUuid)
+        if (service == null) {
+            appendLog("ERROR: Audio service $serviceUuid not found on peripheral.")
+            return
         }
+        val characteristic = service.getCharacteristic(charUuid)
+        if (characteristic == null) {
+            appendLog("ERROR: Command characteristic $charUuid not found.")
+            return
+        }
+
+        val success = DysonProtocolEngine.writeGattPayload(gatt, characteristic, payload)
+        appendLog("TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Success: $success")
     }
 
-    // Used for ANC and EQ Presets
-    fun sendCommand(payload: ByteArray) {
-        val gatt = bluetoothGatt ?: return
-        val service = gatt.getService(DYSON_SERVICE_UUID) ?: return
-        val characteristic = service.getCharacteristic(DYSON_CMD_CHAR_UUID) ?: return
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(characteristic, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-        } else {
-            @Suppress("DEPRECATION")
-            characteristic.value = payload
-            @Suppress("DEPRECATION")
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(characteristic)
-        }
-    }
-    
-    // Custom 5-Band EQ Upload
-    fun sendCustomEq(dbValues: List<Int>) {
-        val gatt = bluetoothGatt ?: return
-        val service = gatt.getService(DYSON_SERVICE_UUID) ?: return
-        val eqChar = service.getCharacteristic(DYSON_CUSTOM_EQ_UUID) ?: return
-        
-        // Convert Integer dB values to Byte array. Dyson firmware expects exactly 5 bytes.
-        val payload = ByteArray(5)
-        for (i in 0 until 5) {
-            payload[i] = dbValues[i].toByte()
-        }
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            gatt.writeCharacteristic(eqChar, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-        } else {
-            @Suppress("DEPRECATION")
-            eqChar.value = payload
-            @Suppress("DEPRECATION")
-            eqChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            @Suppress("DEPRECATION")
-            gatt.writeCharacteristic(eqChar)
-        }
-    }
-
-    fun disconnect() {
-        stopScan()
-        bluetoothGatt?.disconnect()
-    }
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 }
