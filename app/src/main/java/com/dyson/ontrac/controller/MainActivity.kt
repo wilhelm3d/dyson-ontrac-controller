@@ -27,49 +27,49 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dyson.ontrac.controller.settings.ThemePreferences
+import kotlinx.coroutines.launch
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var themePrefs: ThemePreferences
     private var bluetoothGatt: BluetoothGatt? = null
     private val descriptorQueue: Queue<BluetoothGattDescriptor> = ConcurrentLinkedQueue()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            // State toggles for user preferences
-            var useOledBlack by remember { mutableStateOf(true) }
-            var useDynamicTheming by remember { mutableStateOf(true) }
-            val context = LocalContext.current
+        themePrefs = ThemePreferences(applicationContext)
 
-            // Dynamically generate Material You colors if supported (Android 12+)
+        setContent {
+            val scope = rememberCoroutineScope()
+            val dynamicColorEnabled by themePrefs.dynamicColorFlow.collectAsState(initial = true)
+            val oledBlackEnabled by themePrefs.oledBlackFlow.collectAsState(initial = true)
+
+            val context = LocalContext.current
+            val darkTheme = isSystemInDarkTheme()
+
             val colorScheme = when {
-                useDynamicTheming && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-                    if (isSystemInDarkTheme()) {
-                        if (useOledBlack) {
+                dynamicColorEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                    if (darkTheme) {
+                        if (oledBlackEnabled) {
                             dynamicDarkColorScheme(context).copy(
                                 background = Color.Black,
                                 surface = Color.Black,
                                 surfaceVariant = Color(0xFF121212)
                             )
-                        } else {
-                            dynamicDarkColorScheme(context)
-                        }
-                    } else {
-                        dynamicLightColorScheme(context)
-                    }
+                        } else dynamicDarkColorScheme(context)
+                    } else dynamicLightColorScheme(context)
                 }
-                isSystemInDarkTheme() -> {
-                    if (useOledBlack) {
+                darkTheme -> {
+                    if (oledBlackEnabled) {
                         darkColorScheme().copy(
                             background = Color.Black,
                             surface = Color.Black,
                             surfaceVariant = Color(0xFF121212)
                         )
-                    } else {
-                        darkColorScheme()
-                    }
+                    } else darkColorScheme()
                 }
                 else -> lightColorScheme()
             }
@@ -79,7 +79,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    DysonControllerScreen()
+                    DysonControllerScreen(
+                        dynamicColorEnabled = dynamicColorEnabled,
+                        oledBlackEnabled = oledBlackEnabled,
+                        onDynamicColorChanged = { enabled ->
+                            scope.launch { themePrefs.setDynamicColor(enabled) }
+                        },
+                        onOledBlackChanged = { enabled ->
+                            scope.launch { themePrefs.setOledBlack(enabled) }
+                        }
+                    )
                 }
             }
         }
@@ -87,10 +96,15 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("MissingPermission")
     @Composable
-    fun DysonControllerScreen() {
+    fun DysonControllerScreen(
+        dynamicColorEnabled: Boolean,
+        oledBlackEnabled: Boolean,
+        onDynamicColorChanged: (Boolean) -> Unit,
+        onOledBlackChanged: (Boolean) -> Unit
+    ) {
         var statusText by remember { mutableStateOf("Disconnected") }
         var logText by remember { mutableStateOf("Ready. Connect to your Dyson OnTrac.\n") }
-        
+
         // Custom 5-Band EQ States (-10 dB to +10 dB)
         var band1 by remember { mutableStateOf(0f) }
         var band2 by remember { mutableStateOf(0f) }
@@ -127,7 +141,6 @@ class MainActivity : ComponentActivity() {
                         val address = gatt.device.address
                         DysonBluetoothManager.setGattInstance(gatt)
 
-                        // Persist MAC address locally
                         val prefs = getSharedPreferences("DysonPrefs", Context.MODE_PRIVATE)
                         prefs.edit().putString("SAVED_ONTRAC_MAC", address).apply()
 
@@ -159,7 +172,7 @@ class MainActivity : ComponentActivity() {
                         for (ch in service.characteristics) {
                             val p = ch.properties
                             appendLog("  CHR: ${ch.uuid} [Props: 0x${p.toString(16)}]")
-                            
+
                             if ((p and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE)) != 0) {
                                 gatt.setCharacteristicNotification(ch, true)
                                 ch.getDescriptor(DysonProtocolEngine.CCCD_UUID)?.let { desc ->
@@ -194,38 +207,44 @@ class MainActivity : ComponentActivity() {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("Dyson OnTrac Controller + Custom EQ", style = MaterialTheme.typography.titleMedium)
+            Text("Dyson OnTrac Controller", style = MaterialTheme.typography.titleMedium)
             Text("Status: $statusText", color = Color(0xFF80CBC4))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-                    val adapter = bm.adapter
-                    val target = adapter.bondedDevices.firstOrNull {
-                        val n = it.name?.lowercase() ?: ""
-                        n.contains("ontrac") || n.contains("dyson") || n.contains("wp02")
-                    }
-                    if (target != null) {
-                        appendLog("Connecting via TRANSPORT_LE to: ${target.name} (${target.address})")
-                        bluetoothGatt?.close()
-                        bluetoothGatt = target.connectGatt(
-                            this@MainActivity,
-                            false,
-                            gattCallback,
-                            BluetoothDevice.TRANSPORT_LE
-                        )
-                    } else {
-                        appendLog("No bonded OnTrac found. Scanning BLE...")
-                        startBleScan(adapter, gattCallback, ::appendLog)
-                    }
-                }) {
+                Button(
+                    onClick = {
+                        val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                        val adapter = bm.adapter
+                        val target = adapter.bondedDevices.firstOrNull {
+                            val n = it.name?.lowercase() ?: ""
+                            n.contains("ontrac") || n.contains("dyson") || n.contains("wp02")
+                        }
+                        if (target != null) {
+                            appendLog("Connecting via TRANSPORT_LE to: ${target.name} (${target.address})")
+                            bluetoothGatt?.close()
+                            bluetoothGatt = target.connectGatt(
+                                this@MainActivity,
+                                false,
+                                gattCallback,
+                                BluetoothDevice.TRANSPORT_LE
+                            )
+                        } else {
+                            appendLog("No bonded OnTrac found. Scanning BLE...")
+                            startBleScan(adapter, gattCallback, ::appendLog)
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text("Connect OnTrac")
                 }
 
-                Button(onClick = {
-                    val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-                    startBleScan(bm.adapter, gattCallback, ::appendLog)
-                }) {
+                Button(
+                    onClick = {
+                        val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                        startBleScan(bm.adapter, gattCallback, ::appendLog)
+                    },
+                    modifier = Modifier.weight(1f)
+                ) {
                     Text("Scan BLE")
                 }
             }
@@ -292,7 +311,6 @@ class MainActivity : ComponentActivity() {
             HorizontalDivider()
             Text("Custom 5-Band Equalizer (-10dB to +10dB)", style = MaterialTheme.typography.labelLarge)
 
-            // Band Sliders
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 EqSliderRow("60Hz", band1) { band1 = it }
                 EqSliderRow("250Hz", band2) { band2 = it }
@@ -306,7 +324,6 @@ class MainActivity : ComponentActivity() {
                     val payload = DysonProtocolEngine.buildCustomEqPayload(
                         band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
                     )
-                    // First switch preset EQ to custom mode (0x03) then push array
                     sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03), ::appendLog)
                     sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload, ::appendLog)
                 },
@@ -316,11 +333,46 @@ class MainActivity : ComponentActivity() {
             }
 
             HorizontalDivider()
+            Text("Appearance Settings", style = MaterialTheme.typography.labelLarge)
+
+            // Toggle 1: Material You Dynamic Theming
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Material You Dynamic Color", style = MaterialTheme.typography.bodyMedium)
+                    Text("Adapt UI colors to system wallpaper", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
+                Switch(
+                    checked = dynamicColorEnabled,
+                    onCheckedChange = onDynamicColorChanged
+                )
+            }
+
+            // Toggle 2: True OLED Black Theme
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("OLED Black Mode", style = MaterialTheme.typography.bodyMedium)
+                    Text("Use pure #000000 backgrounds in dark mode", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                }
+                Switch(
+                    checked = oledBlackEnabled,
+                    onCheckedChange = onOledBlackChanged
+                )
+            }
+
+            HorizontalDivider()
             Text("Diagnostic Console:", style = MaterialTheme.typography.labelLarge)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(180.dp)
                     .background(Color(0xFF121212))
                     .padding(8.dp)
             ) {
@@ -357,26 +409,25 @@ class MainActivity : ComponentActivity() {
     fun autoReconnectSavedDevice(context: Context, gattCallback: BluetoothGattCallback, appendLog: (String) -> Unit) {
         val prefs = context.getSharedPreferences("DysonPrefs", Context.MODE_PRIVATE)
         val savedMac = prefs.getString("SAVED_ONTRAC_MAC", null)
-        
+
         if (savedMac.isNullOrEmpty()) {
             appendLog("No saved MAC address found. Please pair or connect manually first.")
             return
         }
-        
+
         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         val adapter = bluetoothManager.adapter
-        
+
         if (adapter == null || !adapter.isEnabled) {
             appendLog("Bluetooth adapter is disabled.")
             return
         }
-        
+
         try {
             val device = adapter.getRemoteDevice(savedMac)
             appendLog("Attempting direct connection to saved MAC: $savedMac")
             bluetoothGatt?.close()
-            
-            // Pass autoConnect = false for immediate connection attempt over TRANSPORT_LE
+
             bluetoothGatt = device.connectGatt(
                 context,
                 false,
