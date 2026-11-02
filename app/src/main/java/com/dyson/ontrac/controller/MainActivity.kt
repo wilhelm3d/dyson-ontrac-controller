@@ -408,7 +408,7 @@ class MainActivity : ComponentActivity() {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
+                    .height(180.dp)
                     .background(Color(0xFF121212))
                     .padding(8.dp)
             ) {
@@ -623,14 +623,21 @@ class MainActivity : ComponentActivity() {
             DysonLogger.e("CMD", "ERROR: Not connected to any device.")
             return
         }
-        val service = gatt.getService(serviceUuid)
-        if (service == null) {
-            DysonLogger.e("CMD", "ERROR: Audio service $serviceUuid not found on peripheral.")
-            return
-        }
-        val characteristic = service.getCharacteristic(charUuid)
+
+        // Search primary service first, or fall back to global service discovery
+        var characteristic: BluetoothGattCharacteristic? = gatt.getService(serviceUuid)?.getCharacteristic(charUuid)
         if (characteristic == null) {
-            DysonLogger.e("CMD", "ERROR: Command characteristic $charUuid not found.")
+            for (service in gatt.services) {
+                val c = service.getCharacteristic(charUuid)
+                if (c != null) {
+                    characteristic = c
+                    break
+                }
+            }
+        }
+
+        if (characteristic == null) {
+            DysonLogger.e("CMD", "ERROR: Characteristic $charUuid not found on peripheral.")
             return
         }
 
