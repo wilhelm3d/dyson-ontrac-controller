@@ -27,11 +27,20 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
 import com.dyson.ontrac.controller.logging.DysonLogger
 import com.dyson.ontrac.controller.settings.ThemePreferences
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.coroutines.resume
@@ -43,11 +52,28 @@ class MainActivity : ComponentActivity() {
     private val descriptorQueue: Queue<BluetoothGattDescriptor> = ConcurrentLinkedQueue()
     private var pendingWriteContinuation: CancellableContinuation<Boolean>? = null
 
+    private val gattMutex = Mutex()
+    private val ancSliderFlow = MutableStateFlow(100f)
+
+    @OptIn(FlowPreview::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         themePrefs = ThemePreferences(applicationContext)
         DysonLogger.initFileLogging(applicationContext)
         DysonLogger.i("MAIN", "Dyson OnTrac Controller Activity Launched")
+
+        // Debounce rapid slider updates (waits 100ms after last drag event)
+        lifecycleScope.launch {
+            ancSliderFlow
+                .debounce(100L)
+                .distinctUntilChanged()
+                .collectLatest { percent ->
+                    sendDysonCommandSequential(
+                        DysonProtocolEngine.COMMAND_CHAR_UUID,
+                        DysonProtocolEngine.buildAncIntensityPayload(percent.toInt())
+                    )
+                }
+        }
 
         setContent {
             val scope = rememberCoroutineScope()
@@ -330,13 +356,11 @@ class MainActivity : ComponentActivity() {
             Button(
                 onClick = {
                     scope.launch {
-                        // Step 1: Switch preset to custom mode (0x03) sequentially
                         sendDysonCommandSequential(
                             DysonProtocolEngine.COMMAND_CHAR_UUID,
                             DysonProtocolEngine.buildPresetEqPayload(0x03)
                         )
 
-                        // Step 2: Push 5-band array to custom EQ characteristic
                         val payload = DysonProtocolEngine.buildCustomEqPayload(
                             band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
                         )
@@ -375,9 +399,8 @@ class MainActivity : ComponentActivity() {
                         DysonLogger.i("AUDIOPHILE", "Successfully applied target curve: $name")
                     }
                 },
-                onAncIntensityChanged = { percent ->
-                    val payload = DysonProtocolEngine.buildAncIntensityPayload(percent)
-                    sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
+                onAncSliderChanged = { newVal ->
+                    ancSliderFlow.value = newVal
                 }
             )
 
@@ -456,21 +479,22 @@ class MainActivity : ComponentActivity() {
     @Composable
     fun AudiophileAndAncControls(
         onApplyTargetCurve: (String, FloatArray) -> Unit,
-        onAncIntensityChanged: (Int) -> Unit
+        onAncSliderChanged: (Float) -> Unit
     ) {
-        var ancIntensity by remember { mutableStateOf(100f) }
+        var sliderValue by remember { mutableStateOf(100f) }
 
         Column(
             modifier = Modifier.fillMaxWidth().padding(4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // --- Fine-Grained ANC Depth Slider ---
-            Text("Fine-Grained ANC Depth: ${ancIntensity.toInt()}%", style = MaterialTheme.typography.labelLarge)
+            Text("Fine-Grained ANC Depth: ${sliderValue.toInt()}%", style = MaterialTheme.typography.labelLarge)
             Slider(
-                value = ancIntensity,
-                onValueChange = { 
-                    ancIntensity = it
-                    onAncIntensityChanged(it.toInt())
+                value = sliderValue,
+                onValueChange = { newVal ->
+                    sliderValue = newVal
+                    // Instantly update UI, but flow's .debounce() queues the BLE writes safely
+                    onAncSliderChanged(newVal)
                 },
                 valueRange = 0f..100f,
                 steps = 99,
@@ -648,36 +672,40 @@ class MainActivity : ComponentActivity() {
         charUuid: UUID,
         payload: ByteArray
     ): Boolean {
-        val gatt = bluetoothGatt
-        if (gatt == null) {
-            DysonLogger.e("CMD", "ERROR: Not connected to any device.")
-            return false
-        }
-
-        var foundChar: BluetoothGattCharacteristic? = null
-        for (service in gatt.services) {
-            val ch = service.getCharacteristic(charUuid)
-            if (ch != null) {
-                foundChar = ch
-                break
+        return gattMutex.withLock {
+            val gatt = bluetoothGatt
+            if (gatt == null) {
+                DysonLogger.e("CMD", "ERROR: Not connected to any device.")
+                return@withLock false
             }
-        }
 
-        if (foundChar == null) {
-            DysonLogger.e("CMD", "ERROR: Characteristic $charUuid not found on any service.")
-            return false
-        }
-
-        return suspendCancellableCoroutine { continuation ->
-            pendingWriteContinuation = continuation
-            val success = DysonProtocolEngine.writeGattPayload(gatt, foundChar, payload)
-            DysonLogger.i("CMD", "TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Initiated: $success")
-            if (!success) {
-                pendingWriteContinuation = null
-                if (continuation.isActive) {
-                    continuation.resume(false)
+            var foundChar: BluetoothGattCharacteristic? = null
+            for (service in gatt.services) {
+                val ch = service.getCharacteristic(charUuid)
+                if (ch != null) {
+                    foundChar = ch
+                    break
                 }
             }
+
+            if (foundChar == null) {
+                DysonLogger.e("CMD", "ERROR: Characteristic $charUuid not found on any service.")
+                return@withLock false
+            }
+
+            val writeResult = suspendCancellableCoroutine<Boolean> { continuation ->
+                pendingWriteContinuation = continuation
+                val success = DysonProtocolEngine.writeGattPayload(gatt, foundChar, payload)
+                DysonLogger.i("CMD", "TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Initiated: $success")
+                if (!success) {
+                    pendingWriteContinuation = null
+                    if (continuation.isActive) {
+                        continuation.resume(false)
+                    }
+                }
+            }
+            delay(40)
+            writeResult
         }
     }
 
