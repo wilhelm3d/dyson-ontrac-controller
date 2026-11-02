@@ -18,8 +18,10 @@ object DysonProtocolEngine {
     private const val FRAME_MARKER: Byte = 0x40
 
     // --- Trait Command IDs (on.b) ---
-    private const val CMD_ID_ANC: Byte = 10         // 0x0A
-    private const val CMD_ID_PRESET_EQ: Byte = 11   // 0x0B
+    private const val CMD_ID_ANC: Byte = 10            // 0x0A
+    private const val CMD_ID_PRESET_EQ: Byte = 11      // 0x0B
+    private const val CMD_ID_WEAR_DETECTION: Byte = 0x41// Sensor toggle / threshold
+    private const val CMD_ID_GESTURE_REMAP: Byte = 0x35 // Double-tap/hold action map
 
     fun buildTraitPayload(commandId: Byte, value: Byte): ByteArray {
         return byteArrayOf(commandId, FRAME_MARKER, value)
@@ -37,6 +39,23 @@ object DysonProtocolEngine {
             band4Db.coerceIn(-10, 10).toByte(),
             band5Db.coerceIn(-10, 10).toByte()
         )
+    }
+
+    /**
+     * Toggles or tunes wear-detection auto-pause sensor.
+     * State values: 0x00 = Disabled, 0x01 = Low Sensitivity, 0x02 = High Sensitivity
+     */
+    fun buildWearDetectionPayload(state: Byte): ByteArray {
+        return byteArrayOf(CMD_ID_WEAR_DETECTION, FRAME_MARKER, state)
+    }
+
+    /**
+     * Remaps physical earcup gestures.
+     * Gesture ID: 0x01 = Double-Tap, 0x02 = Touch-and-Hold
+     * Action ID:  0x00 = Play/Pause, 0x01 = Voice Assistant, 0x02 = Cycle ANC/Transparency, 0x03 = Track Skip
+     */
+    fun buildGestureRemapPayload(gestureId: Byte, actionId: Byte): ByteArray {
+        return byteArrayOf(CMD_ID_GESTURE_REMAP, FRAME_MARKER, gestureId, actionId)
     }
 
     @Suppress("DEPRECATION")

@@ -333,6 +333,11 @@ class MainActivity : ComponentActivity() {
             }
 
             HorizontalDivider()
+            HardwareCustomizationPanel { payload ->
+                sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload, ::appendLog)
+            }
+
+            HorizontalDivider()
             Text("Appearance Settings", style = MaterialTheme.typography.labelLarge)
 
             // Toggle 1: Material You Dynamic Theming
@@ -382,6 +387,52 @@ class MainActivity : ComponentActivity() {
                     fontSize = 11.sp,
                     color = Color(0xFF00E676)
                 )
+            }
+        }
+    }
+
+    @Composable
+    fun HardwareCustomizationPanel(onSendCommand: (ByteArray) -> Unit) {
+        var wearDetectionState by remember { mutableStateOf(2) } // 0: Off, 1: Low, 2: High
+        var doubleTapAction by remember { mutableStateOf(2) }    // 0: Play/Pause, 1: Assistant, 2: Cycle Modes, 3: Skip
+
+        Column(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Capacitive Wear-Detection Tuning", style = MaterialTheme.typography.labelLarge)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Disabled" to 0, "Low" to 1, "High" to 2).forEach { (label, value) ->
+                    Button(
+                        onClick = {
+                            wearDetectionState = value
+                            onSendCommand(DysonProtocolEngine.buildWearDetectionPayload(value.toByte()))
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (wearDetectionState == value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Text(label, fontSize = 11.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("Custom Earcup Gesture Remapping (Double-Tap)", style = MaterialTheme.typography.labelLarge)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("Play/Pause" to 0, "Assistant" to 1, "Cycle ANC" to 2, "Skip" to 3).forEach { (label, value) ->
+                    Button(
+                        onClick = {
+                            doubleTapAction = value
+                            // Gesture ID 0x01 = Double Tap, followed by action ID
+                            onSendCommand(DysonProtocolEngine.buildGestureRemapPayload(0x01, value.toByte()))
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (doubleTapAction == value) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Text(label, fontSize = 10.sp)
+                    }
+                }
             }
         }
     }
