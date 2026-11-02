@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dyson.ontrac.controller.logging.DysonLogger
 import com.dyson.ontrac.controller.settings.ThemePreferences
 import kotlinx.coroutines.launch
 import java.util.*
@@ -41,6 +42,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         themePrefs = ThemePreferences(applicationContext)
+        DysonLogger.initFileLogging(applicationContext)
+        DysonLogger.i("MAIN", "Dyson OnTrac Controller Activity Launched")
 
         setContent {
             val scope = rememberCoroutineScope()
@@ -103,7 +106,7 @@ class MainActivity : ComponentActivity() {
         onOledBlackChanged: (Boolean) -> Unit
     ) {
         var statusText by remember { mutableStateOf("Disconnected") }
-        var logText by remember { mutableStateOf("Ready. Connect to your Dyson OnTrac.\n") }
+        val logText by DysonLogger.logFlow.collectAsState()
 
         // Custom 5-Band EQ States (-10 dB to +10 dB)
         var band1 by remember { mutableStateOf(0f) }
@@ -112,14 +115,10 @@ class MainActivity : ComponentActivity() {
         var band4 by remember { mutableStateOf(0f) }
         var band5 by remember { mutableStateOf(0f) }
 
-        fun appendLog(msg: String) {
-            logText = (logText + msg + "\n").takeLast(12000)
-        }
-
         val permissionLauncher = rememberLauncherForActivityResult(
             ActivityResultContracts.RequestMultiplePermissions()
         ) { perms ->
-            appendLog("Permissions granted: ${perms.values.all { it }}")
+            DysonLogger.i("PERM", "Permissions result: ${perms.values.all { it }}")
         }
 
         LaunchedEffect(Unit) {
@@ -145,33 +144,33 @@ class MainActivity : ComponentActivity() {
                         prefs.edit().putString("SAVED_ONTRAC_MAC", address).apply()
 
                         statusText = "Connected ($address)"
-                        appendLog("ACL/LE Connected ($address). Requesting MTU 251...")
+                        DysonLogger.i("GATT", "ACL/LE Connected ($address). Requesting MTU 251...")
                         gatt.requestMtu(251)
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                         DysonBluetoothManager.setGattInstance(null)
                         statusText = "Disconnected"
-                        appendLog("Disconnected from GATT server (status=$status)")
+                        DysonLogger.i("GATT", "Disconnected from GATT server (status=$status)")
                     }
                 }
 
                 override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                    appendLog("MTU negotiated: $mtu (status=$status). Discovering services...")
+                    DysonLogger.i("GATT", "MTU negotiated: $mtu (status=$status). Discovering services...")
                     gatt.discoverServices()
                 }
 
                 override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                     if (status != BluetoothGatt.GATT_SUCCESS) {
-                        appendLog("Service discovery failed: $status")
+                        DysonLogger.e("GATT", "Service discovery failed with status: $status")
                         return
                     }
                     descriptorQueue.clear()
 
-                    appendLog("=== DISCOVERED GATT SERVICES ===")
+                    DysonLogger.i("GATT", "=== DISCOVERED GATT SERVICES ===")
                     for (service in gatt.services) {
-                        appendLog("SVC: ${service.uuid}")
+                        DysonLogger.i("GATT", "SVC: ${service.uuid}")
                         for (ch in service.characteristics) {
                             val p = ch.properties
-                            appendLog("  CHR: ${ch.uuid} [Props: 0x${p.toString(16)}]")
+                            DysonLogger.i("GATT", "  CHR: ${ch.uuid} [Props: 0x${p.toString(16)}]")
 
                             if ((p and (BluetoothGattCharacteristic.PROPERTY_NOTIFY or BluetoothGattCharacteristic.PROPERTY_INDICATE)) != 0) {
                                 gatt.setCharacteristicNotification(ch, true)
@@ -186,16 +185,16 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                    appendLog("CCCD Subscribed: ${descriptor.characteristic.uuid} (status=$status)")
+                    DysonLogger.i("GATT", "CCCD Subscribed: ${descriptor.characteristic.uuid} (status=$status)")
                     processNextDescriptor(gatt)
                 }
 
                 override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-                    appendLog("RX Notification: ${value.toHex()}")
+                    DysonLogger.i("RX_NOTIF", "Characteristic ${characteristic.uuid} -> ${value.toHex()}")
                 }
 
                 override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-                    appendLog("TX Write Ack: status=$status")
+                    DysonLogger.i("TX_ACK", "Write Ack for ${characteristic.uuid} | status=$status")
                 }
             }
         }
@@ -220,7 +219,7 @@ class MainActivity : ComponentActivity() {
                             n.contains("ontrac") || n.contains("dyson") || n.contains("wp02")
                         }
                         if (target != null) {
-                            appendLog("Connecting via TRANSPORT_LE to: ${target.name} (${target.address})")
+                            DysonLogger.i("BLE", "Connecting via TRANSPORT_LE to bonded: ${target.name} (${target.address})")
                             bluetoothGatt?.close()
                             bluetoothGatt = target.connectGatt(
                                 this@MainActivity,
@@ -229,8 +228,8 @@ class MainActivity : ComponentActivity() {
                                 BluetoothDevice.TRANSPORT_LE
                             )
                         } else {
-                            appendLog("No bonded OnTrac found. Scanning BLE...")
-                            startBleScan(adapter, gattCallback, ::appendLog)
+                            DysonLogger.i("BLE", "No bonded OnTrac found. Starting BLE scan...")
+                            startBleScan(adapter, gattCallback)
                         }
                     },
                     modifier = Modifier.weight(1f)
@@ -241,7 +240,7 @@ class MainActivity : ComponentActivity() {
                 Button(
                     onClick = {
                         val bm = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-                        startBleScan(bm.adapter, gattCallback, ::appendLog)
+                        startBleScan(bm.adapter, gattCallback)
                     },
                     modifier = Modifier.weight(1f)
                 ) {
@@ -251,9 +250,7 @@ class MainActivity : ComponentActivity() {
 
             Button(
                 onClick = {
-                    autoReconnectSavedDevice(this@MainActivity, gattCallback) { msg ->
-                        appendLog(msg)
-                    }
+                    autoReconnectSavedDevice(this@MainActivity, gattCallback)
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -265,19 +262,19 @@ class MainActivity : ComponentActivity() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x00), ::appendLog) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x00)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Isolation", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x02), ::appendLog) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x02)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Transparency", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x03), ::appendLog) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x03)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("ANC Off", fontSize = 11.sp)
@@ -289,19 +286,19 @@ class MainActivity : ComponentActivity() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x02), ::appendLog) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x02)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Neutral", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x00), ::appendLog) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x00)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Enhanced", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x01), ::appendLog) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x01)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Bass Boost", fontSize = 11.sp)
@@ -324,8 +321,8 @@ class MainActivity : ComponentActivity() {
                     val payload = DysonProtocolEngine.buildCustomEqPayload(
                         band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
                     )
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03), ::appendLog)
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload, ::appendLog)
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -343,19 +340,19 @@ class MainActivity : ComponentActivity() {
                     val payload = DysonProtocolEngine.buildCustomEqPayload(
                         gains[0].toInt(), gains[1].toInt(), gains[2].toInt(), gains[3].toInt(), gains[4].toInt()
                     )
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03), ::appendLog)
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload, ::appendLog)
-                    appendLog("Applied target curve: $name")
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
+                    DysonLogger.i("AUDIOPHILE", "Applied target curve: $name")
                 },
                 onAncIntensityChanged = { percent ->
                     val payload = DysonProtocolEngine.buildAncIntensityPayload(percent)
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload, ::appendLog)
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
                 }
             )
 
             HorizontalDivider()
             HardwareCustomizationPanel { payload ->
-                sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload, ::appendLog)
+                sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
             }
 
             HorizontalDivider()
@@ -394,11 +391,24 @@ class MainActivity : ComponentActivity() {
             }
 
             HorizontalDivider()
-            Text("Diagnostic Console:", style = MaterialTheme.typography.labelLarge)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Diagnostic Console Log", style = MaterialTheme.typography.labelLarge)
+                Button(
+                    onClick = { DysonLogger.clear() },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text("Clear Console", fontSize = 11.sp)
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp)
+                    .height(200.dp)
                     .background(Color(0xFF121212))
                     .padding(8.dp)
             ) {
@@ -522,12 +532,12 @@ class MainActivity : ComponentActivity() {
     }
 
     @SuppressLint("MissingPermission")
-    fun autoReconnectSavedDevice(context: Context, gattCallback: BluetoothGattCallback, appendLog: (String) -> Unit) {
+    fun autoReconnectSavedDevice(context: Context, gattCallback: BluetoothGattCallback) {
         val prefs = context.getSharedPreferences("DysonPrefs", Context.MODE_PRIVATE)
         val savedMac = prefs.getString("SAVED_ONTRAC_MAC", null)
 
         if (savedMac.isNullOrEmpty()) {
-            appendLog("No saved MAC address found. Please pair or connect manually first.")
+            DysonLogger.e("BLE", "No saved MAC address found. Please pair or connect manually first.")
             return
         }
 
@@ -535,13 +545,13 @@ class MainActivity : ComponentActivity() {
         val adapter = bluetoothManager.adapter
 
         if (adapter == null || !adapter.isEnabled) {
-            appendLog("Bluetooth adapter is disabled.")
+            DysonLogger.e("BLE", "Bluetooth adapter is disabled.")
             return
         }
 
         try {
             val device = adapter.getRemoteDevice(savedMac)
-            appendLog("Attempting direct connection to saved MAC: $savedMac")
+            DysonLogger.i("BLE", "Attempting direct connection to saved MAC: $savedMac")
             bluetoothGatt?.close()
 
             bluetoothGatt = device.connectGatt(
@@ -551,26 +561,26 @@ class MainActivity : ComponentActivity() {
                 BluetoothDevice.TRANSPORT_LE
             )
         } catch (e: IllegalArgumentException) {
-            appendLog("Invalid MAC address stored: $savedMac")
+            DysonLogger.e("BLE", "Invalid MAC address stored: $savedMac")
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun startBleScan(
         adapter: BluetoothAdapter,
-        gattCallback: BluetoothGattCallback,
-        appendLog: (String) -> Unit
+        gattCallback: BluetoothGattCallback
     ) {
         val scanner = adapter.bluetoothLeScanner ?: return
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
+        DysonLogger.i("BLE_SCAN", "Starting low-latency BLE scan...")
         scanner.startScan(null, settings, object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 val name = result.device.name ?: result.scanRecord?.deviceName ?: ""
                 if (name.contains("OnTrac", true) || name.contains("Dyson", true) || name.contains("WP02", true)) {
                     scanner.stopScan(this)
-                    appendLog("Found target: $name (${result.device.address}). Connecting...")
+                    DysonLogger.i("BLE_SCAN", "Found target: $name (${result.device.address}). Connecting...")
                     bluetoothGatt?.close()
                     bluetoothGatt = result.device.connectGatt(
                         this@MainActivity,
@@ -606,27 +616,26 @@ class MainActivity : ComponentActivity() {
     private fun sendDysonCommand(
         serviceUuid: UUID,
         charUuid: UUID,
-        payload: ByteArray,
-        appendLog: (String) -> Unit
+        payload: ByteArray
     ) {
         val gatt = bluetoothGatt
         if (gatt == null) {
-            appendLog("ERROR: Not connected to any device.")
+            DysonLogger.e("CMD", "ERROR: Not connected to any device.")
             return
         }
         val service = gatt.getService(serviceUuid)
         if (service == null) {
-            appendLog("ERROR: Audio service $serviceUuid not found on peripheral.")
+            DysonLogger.e("CMD", "ERROR: Audio service $serviceUuid not found on peripheral.")
             return
         }
         val characteristic = service.getCharacteristic(charUuid)
         if (characteristic == null) {
-            appendLog("ERROR: Command characteristic $charUuid not found.")
+            DysonLogger.e("CMD", "ERROR: Command characteristic $charUuid not found.")
             return
         }
 
         val success = DysonProtocolEngine.writeGattPayload(gatt, characteristic, payload)
-        appendLog("TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Success: $success")
+        DysonLogger.i("CMD", "TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Success: $success")
     }
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
