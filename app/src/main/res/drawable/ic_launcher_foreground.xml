@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Headphones shape matching Nothing brutalist geometry -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,20 C35.2,20 20,35.2 20,54 L20,74 C20,79.5 24.5,84 30,84 L34,84 C39.5,84 44,79.5 44,74 L44,60 C44,54.5 39.5,50 34,50 L28,50 C28,35.6 39.6,24 54,24 C68.4,24 80,35.6 80,50 L74,50 C68.5,50 64,54.5 64,60 L64,74 C64,79.5 68.5,84 74,84 L78,84 C83.5,84 88,79.5 88,74 L88,54 C88,35.2 72.8,20 54,20 Z" />
+
+    <!-- Red dot accent for Nothing aesthetics -->
+    <path
+        android:fillColor="#EA3323"
+        android:pathData="M54,54 m-8,0 a8,8 0 1,1 16,0 a8,8 0 1,1 -16,0" />
+</vector>

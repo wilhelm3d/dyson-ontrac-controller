@@ -1,0 +1,76 @@
+package com.dyson.mobile.android.audio.home.interruptions.help;
+
+import kotlin.Metadata;
+/* loaded from: classes2.dex */
+public interface a {
+
+    @Metadata(d1 = {"\u0000\f\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0003\bÇ\n\u0018\u00002\u00020\u0001B\t\b\u0002¢\u0006\u0004\b\u0002\u0010\u0003¨\u0006\u0004"}, d2 = {"Lcom/dyson/mobile/android/audio/home/interruptions/help/a$a;", "Lcom/dyson/mobile/android/audio/home/interruptions/help/a;", "<init>", "()V", "mod-audio"}, k = 1, mv = {2, 3, 0}, xi = 48)
+    /* renamed from: com.dyson.mobile.android.audio.home.interruptions.help.a$a  reason: collision with other inner class name */
+    /* loaded from: classes2.dex */
+    public static final class C0350a implements a {
+
+        /* renamed from: a  reason: collision with root package name */
+        public static final C0350a f12534a = new C0350a();
+
+        private C0350a() {
+        }
+
+        public final boolean equals(Object obj) {
+            return this == obj || (obj instanceof C0350a);
+        }
+
+        public final int hashCode() {
+            return -300832833;
+        }
+
+        public final String toString() {
+            return "PrimaryButtonClicked";
+        }
+    }
+
+    @Metadata(d1 = {"\u0000\f\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0003\bÇ\n\u0018\u00002\u00020\u0001B\t\b\u0002¢\u0006\u0004\b\u0002\u0010\u0003¨\u0006\u0004"}, d2 = {"Lcom/dyson/mobile/android/audio/home/interruptions/help/a$b;", "Lcom/dyson/mobile/android/audio/home/interruptions/help/a;", "<init>", "()V", "mod-audio"}, k = 1, mv = {2, 3, 0}, xi = 48)
+    /* loaded from: classes2.dex */
+    public static final class b implements a {
+
+        /* renamed from: a  reason: collision with root package name */
+        public static final b f12535a = new b();
+
+        private b() {
+        }
+
+        public final boolean equals(Object obj) {
+            return this == obj || (obj instanceof b);
+        }
+
+        public final int hashCode() {
+            return 797678221;
+        }
+
+        public final String toString() {
+            return "SecondaryButtonClicked";
+        }
+    }
+
+    @Metadata(d1 = {"\u0000\f\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0003\bÇ\n\u0018\u00002\u00020\u0001B\t\b\u0002¢\u0006\u0004\b\u0002\u0010\u0003¨\u0006\u0004"}, d2 = {"Lcom/dyson/mobile/android/audio/home/interruptions/help/a$c;", "Lcom/dyson/mobile/android/audio/home/interruptions/help/a;", "<init>", "()V", "mod-audio"}, k = 1, mv = {2, 3, 0}, xi = 48)
+    /* loaded from: classes2.dex */
+    public static final class c implements a {
+
+        /* renamed from: a  reason: collision with root package name */
+        public static final c f12536a = new c();
+
+        private c() {
+        }
+
+        public final boolean equals(Object obj) {
+            return this == obj || (obj instanceof c);
+        }
+
+        public final int hashCode() {
+            return 1242465635;
+        }
+
+        public final String toString() {
+            return "ViewInitialized";
+        }
+    }
+}

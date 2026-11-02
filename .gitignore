@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+app/build/
+
+# Exclude tooling binaries to save space
+jadx.zip
+jadx/
+apktool.jar
+
+# Exclude raw APK and raw resource dumps to keep repo clean and fast
+dyson_base.apk
+dyson_extracted/
+dyson_smali2/
+dyson_smali/

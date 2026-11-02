@@ -1,0 +1,53 @@
+package com.dyson.mobile.android.robot.newsystem.navigation.destination;
+
+import android.os.Parcelable;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ActivityHistoryDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ConfirmMapDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.DoNotDisturbDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.DockCommissioningDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.EditFurnitureDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.MachineSettingsDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ManageRoomsDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ManageRulesDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.MapManagementDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ProductHubDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.RenameMapDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.RenameRoomDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ScheduleCleanDestination$EditCleanSettings;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ScheduleCleanDestination$EditZoneCleanSettings;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ScheduleCleanDestination$Graph;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ScheduleCleanDestination$ScheduleForm;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.StartCleanDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.VoiceSettingsDestination;
+import com.dyson.mobile.android.robot.newsystem.navigation.destination.ZoomMapViewDestination;
+import e22.d;
+import java.lang.annotation.Annotation;
+import kotlin.Metadata;
+import t42.b;
+import t42.f;
+import t42.g;
+import x12.p0;
+import x12.q0;
+import x42.g1;
+@Metadata(d1 = {"\u0000N\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0000\bw\u0018\u0000 \u00022\u00020\u0001:\u0001\u0003\u0082\u0001\u0010\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013¨\u0006\u0014À\u0006\u0003"}, d2 = {"Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/RobotDestination;", "Landroid/os/Parcelable;", "Companion", "a", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/ActivityHistoryDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/ConfirmMapDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/DoNotDisturbDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/DockCommissioningDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/EditFurnitureDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/MachineSettingsDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/ManageRoomsDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/ManageRulesDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/MapManagementDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/ProductHubDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/RenameMapDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/RenameRoomDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/RobotRemoveMachineDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/StartCleanDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/VoiceSettingsDestination;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/ZoomMapViewDestination;", "mod-robot"}, k = 1, mv = {2, 3, 0}, xi = 48)
+@g
+/* loaded from: classes3.dex */
+public interface RobotDestination extends Parcelable {
+    public static final a Companion = a.f16527a;
+
+    @Metadata(d1 = {"\u0000\u0018\n\u0002\u0018\u0002\n\u0002\u0010\u0000\n\u0002\b\u0002\n\u0002\u0018\u0002\n\u0002\u0018\u0002\n\u0002\b\u0003\b\u0086\u0003\u0018\u00002\u00020\u0001B\t\b\u0002¢\u0006\u0004\b\u0002\u0010\u0003J\u0013\u0010\u0006\u001a\b\u0012\u0004\u0012\u00020\u00050\u0004¢\u0006\u0004\b\u0006\u0010\u0007¨\u0006\b"}, d2 = {"Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/RobotDestination$a;", "", "<init>", "()V", "Lt42/b;", "Lcom/dyson/mobile/android/robot/newsystem/navigation/destination/RobotDestination;", "serializer", "()Lt42/b;", "mod-robot"}, k = 1, mv = {2, 3, 0}, xi = 48)
+    /* loaded from: classes3.dex */
+    public static final class a {
+
+        /* renamed from: a  reason: collision with root package name */
+        public static final /* synthetic */ a f16527a = new a();
+
+        private a() {
+        }
+
+        public final b<RobotDestination> serializer() {
+            q0 q0Var = p0.f86717a;
+            return new f("com.dyson.mobile.android.robot.newsystem.navigation.destination.RobotDestination", q0Var.b(RobotDestination.class), new d[]{q0Var.b(ActivityHistoryDestination.Graph.class), q0Var.b(ConfirmMapDestination.Root.class), q0Var.b(DoNotDisturbDestination.DoNotDisturb.class), q0Var.b(DockCommissioningDestination.DockCommissioningIntro.class), q0Var.b(EditFurnitureDestination.Graph.class), q0Var.b(MachineSettingsDestination.DockSettings.class), q0Var.b(MachineSettingsDestination.MopSettings.class), q0Var.b(ManageRoomsDestination.DeleteRoomPreview.class), q0Var.b(ManageRoomsDestination.Graph.class), q0Var.b(ManageRoomsDestination.ManageRooms.class), q0Var.b(ManageRoomsDestination.ManageRoomsMode.class), q0Var.b(ManageRulesDestination.Graph.class), q0Var.b(MapManagementDestination.Graph.class), q0Var.b(MapManagementDestination.MapManagement.class), q0Var.b(MapManagementDestination.MapNameSelection.class), q0Var.b(ProductHubDestination.ConsumableDetails.class), q0Var.b(ProductHubDestination.Graph.class), q0Var.b(ProductHubDestination.ProductHub.class), q0Var.b(RenameMapDestination.Graph.class), q0Var.b(RenameMapDestination.MapNameSelection.class), q0Var.b(RenameRoomDestination.Graph.class), q0Var.b(RenameRoomDestination.RoomNameSelection.class), q0Var.b(RobotRemoveMachineDestination.class), q0Var.b(ScheduleCleanDestination$EditCleanSettings.class), q0Var.b(ScheduleCleanDestination$EditZoneCleanSettings.class), q0Var.b(ScheduleCleanDestination$Graph.class), q0Var.b(ScheduleCleanDestination$ScheduleForm.class), q0Var.b(ScheduleCleanDestination$Setup.class), q0Var.b(StartCleanDestination.EditCleanSettings.class), q0Var.b(StartCleanDestination.EditZoneCleanSettings.class), q0Var.b(VoiceSettingsDestination.Graph.class), q0Var.b(VoiceSettingsDestination.VoiceLanguageSettings.class), q0Var.b(VoiceSettingsDestination.VoiceSettings.class), q0Var.b(ZoomMapViewDestination.Graph.class)}, new b[]{new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.ActivityHistoryDestination.Graph", ActivityHistoryDestination.Graph.INSTANCE, new Annotation[0]), ConfirmMapDestination.Root.a.f16494a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.DoNotDisturbDestination.DoNotDisturb", DoNotDisturbDestination.DoNotDisturb.INSTANCE, new Annotation[0]), new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.DockCommissioningDestination.DockCommissioningIntro", DockCommissioningDestination.DockCommissioningIntro.INSTANCE, new Annotation[0]), EditFurnitureDestination.Graph.a.f16496a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.MachineSettingsDestination.DockSettings", MachineSettingsDestination.DockSettings.INSTANCE, new Annotation[0]), new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.MachineSettingsDestination.MopSettings", MachineSettingsDestination.MopSettings.INSTANCE, new Annotation[0]), ManageRoomsDestination.DeleteRoomPreview.a.f16497a, ManageRoomsDestination.Graph.a.f16498a, ManageRoomsDestination.ManageRooms.a.f16499a, ManageRoomsDestination.ManageRoomsMode.a.f16501a, ManageRulesDestination.Graph.a.f16505a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.MapManagementDestination.Graph", MapManagementDestination.Graph.INSTANCE, new Annotation[0]), new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.MapManagementDestination.MapManagement", MapManagementDestination.MapManagement.INSTANCE, new Annotation[0]), MapManagementDestination.MapNameSelection.a.f16509a, ProductHubDestination.ConsumableDetails.a.f16510a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.ProductHubDestination.Graph", ProductHubDestination.Graph.INSTANCE, new Annotation[0]), new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.ProductHubDestination.ProductHub", ProductHubDestination.ProductHub.INSTANCE, new Annotation[0]), RenameMapDestination.Graph.a.f16513a, RenameMapDestination.MapNameSelection.a.f16516a, RenameRoomDestination.Graph.a.f16521a, RenameRoomDestination.RoomNameSelection.a.f16526a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.RobotRemoveMachineDestination", RobotRemoveMachineDestination.INSTANCE, new Annotation[0]), ScheduleCleanDestination$EditCleanSettings.a.f16528a, ScheduleCleanDestination$EditZoneCleanSettings.a.f16530a, ScheduleCleanDestination$Graph.a.f16531a, ScheduleCleanDestination$ScheduleForm.a.f16532a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.ScheduleCleanDestination.Setup", ScheduleCleanDestination$Setup.INSTANCE, new Annotation[0]), StartCleanDestination.EditCleanSettings.a.f16533a, StartCleanDestination.EditZoneCleanSettings.a.f16537a, VoiceSettingsDestination.Graph.a.f16538a, new g1("com.dyson.mobile.android.robot.newsystem.navigation.destination.VoiceSettingsDestination.VoiceLanguageSettings", VoiceSettingsDestination.VoiceLanguageSettings.INSTANCE, new Annotation[0]), VoiceSettingsDestination.VoiceSettings.a.f16539a, ZoomMapViewDestination.Graph.a.f16542a}, new Annotation[0]);
+        }
+    }
+}
