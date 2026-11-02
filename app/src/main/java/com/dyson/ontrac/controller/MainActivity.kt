@@ -262,19 +262,19 @@ class MainActivity : ComponentActivity() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x00)) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x00)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Isolation", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x02)) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x02)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Transparency", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x03)) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildAncPayload(0x03)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("ANC Off", fontSize = 11.sp)
@@ -286,19 +286,19 @@ class MainActivity : ComponentActivity() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x02)) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x02)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Neutral", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x00)) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x00)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Enhanced", fontSize = 11.sp)
                 }
                 Button(
-                    onClick = { sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x01)) },
+                    onClick = { sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x01)) },
                     modifier = Modifier.weight(1f)
                 ) {
                     Text("Bass Boost", fontSize = 11.sp)
@@ -321,8 +321,8 @@ class MainActivity : ComponentActivity() {
                     val payload = DysonProtocolEngine.buildCustomEqPayload(
                         band1.toInt(), band2.toInt(), band3.toInt(), band4.toInt(), band5.toInt()
                     )
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
+                    sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
+                    sendDysonCommand(DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -340,19 +340,19 @@ class MainActivity : ComponentActivity() {
                     val payload = DysonProtocolEngine.buildCustomEqPayload(
                         gains[0].toInt(), gains[1].toInt(), gains[2].toInt(), gains[3].toInt(), gains[4].toInt()
                     )
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
+                    sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03))
+                    sendDysonCommand(DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload)
                     DysonLogger.i("AUDIOPHILE", "Applied target curve: $name")
                 },
                 onAncIntensityChanged = { percent ->
                     val payload = DysonProtocolEngine.buildAncIntensityPayload(percent)
-                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
+                    sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
                 }
             )
 
             HorizontalDivider()
             HardwareCustomizationPanel { payload ->
-                sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
+                sendDysonCommand(DysonProtocolEngine.COMMAND_CHAR_UUID, payload)
             }
 
             HorizontalDivider()
@@ -614,7 +614,6 @@ class MainActivity : ComponentActivity() {
 
     @SuppressLint("MissingPermission")
     private fun sendDysonCommand(
-        serviceUuid: UUID,
         charUuid: UUID,
         payload: ByteArray
     ) {
@@ -624,24 +623,22 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        // Search primary service first, or fall back to global service discovery
-        var characteristic: BluetoothGattCharacteristic? = gatt.getService(serviceUuid)?.getCharacteristic(charUuid)
-        if (characteristic == null) {
-            for (service in gatt.services) {
-                val c = service.getCharacteristic(charUuid)
-                if (c != null) {
-                    characteristic = c
-                    break
-                }
+        // Search globally across all discovered services for the characteristic
+        var foundChar: BluetoothGattCharacteristic? = null
+        for (service in gatt.services) {
+            val ch = service.getCharacteristic(charUuid)
+            if (ch != null) {
+                foundChar = ch
+                break
             }
         }
 
-        if (characteristic == null) {
-            DysonLogger.e("CMD", "ERROR: Characteristic $charUuid not found on peripheral.")
+        if (foundChar == null) {
+            DysonLogger.e("CMD", "ERROR: Characteristic $charUuid not found on any service.")
             return
         }
 
-        val success = DysonProtocolEngine.writeGattPayload(gatt, characteristic, payload)
+        val success = DysonProtocolEngine.writeGattPayload(gatt, foundChar, payload)
         DysonLogger.i("CMD", "TX -> [${charUuid.toString().take(8)}] payload: ${payload.toHex()} | Success: $success")
     }
 
