@@ -83,11 +83,16 @@ class MainActivity : ComponentActivity() {
             object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        statusText = "Connected (${gatt.device.address}) - Requesting MTU..."
-                        appendLog("ACL/LE Connected. Requesting MTU 251...")
+                        val address = gatt.device.address
+                        // Persist MAC address locally
+                        val prefs = getSharedPreferences("DysonPrefs", Context.MODE_PRIVATE)
+                        prefs.edit().putString("SAVED_ONTRAC_MAC", address).apply()
+
+                        statusText = "Connected ($address)"
+                        appendLog("ACL/LE Connected ($address). Requesting MTU 251...")
                         gatt.requestMtu(251)
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        statusText = "Disconnected (status=$status)"
+                        statusText = "Disconnected"
                         appendLog("Disconnected from GATT server (status=$status)")
                     }
                 }
@@ -179,6 +184,17 @@ class MainActivity : ComponentActivity() {
                 }) {
                     Text("Scan BLE")
                 }
+            }
+
+            Button(
+                onClick = {
+                    autoReconnectSavedDevice(this@MainActivity, gattCallback) { msg ->
+                        appendLog(msg)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Auto-Reconnect Saved Device")
             }
 
             HorizontalDivider()
@@ -290,6 +306,41 @@ class MainActivity : ComponentActivity() {
                 modifier = Modifier.weight(1f)
             )
             Text("${value.toInt()} dB", modifier = Modifier.width(45.dp), fontSize = 11.sp)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    fun autoReconnectSavedDevice(context: Context, gattCallback: BluetoothGattCallback, appendLog: (String) -> Unit) {
+        val prefs = context.getSharedPreferences("DysonPrefs", Context.MODE_PRIVATE)
+        val savedMac = prefs.getString("SAVED_ONTRAC_MAC", null)
+        
+        if (savedMac.isNullOrEmpty()) {
+            appendLog("No saved MAC address found. Please pair or connect manually first.")
+            return
+        }
+        
+        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+        val adapter = bluetoothManager.adapter
+        
+        if (adapter == null || !adapter.isEnabled) {
+            appendLog("Bluetooth adapter is disabled.")
+            return
+        }
+        
+        try {
+            val device = adapter.getRemoteDevice(savedMac)
+            appendLog("Attempting direct connection to saved MAC: $savedMac")
+            bluetoothGatt?.close()
+            
+            // Pass autoConnect = false for immediate connection attempt over TRANSPORT_LE
+            bluetoothGatt = device.connectGatt(
+                context,
+                false,
+                gattCallback,
+                BluetoothDevice.TRANSPORT_LE
+            )
+        } catch (e: IllegalArgumentException) {
+            appendLog("Invalid MAC address stored: $savedMac")
         }
     }
 
