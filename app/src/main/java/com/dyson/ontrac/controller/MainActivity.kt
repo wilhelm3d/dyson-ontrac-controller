@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -22,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,8 +38,47 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(modifier = Modifier.fillMaxSize()) {
+            // State toggles for user preferences
+            var useOledBlack by remember { mutableStateOf(true) }
+            var useDynamicTheming by remember { mutableStateOf(true) }
+            val context = LocalContext.current
+
+            // Dynamically generate Material You colors if supported (Android 12+)
+            val colorScheme = when {
+                useDynamicTheming && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+                    if (isSystemInDarkTheme()) {
+                        if (useOledBlack) {
+                            dynamicDarkColorScheme(context).copy(
+                                background = Color.Black,
+                                surface = Color.Black,
+                                surfaceVariant = Color(0xFF121212)
+                            )
+                        } else {
+                            dynamicDarkColorScheme(context)
+                        }
+                    } else {
+                        dynamicLightColorScheme(context)
+                    }
+                }
+                isSystemInDarkTheme() -> {
+                    if (useOledBlack) {
+                        darkColorScheme().copy(
+                            background = Color.Black,
+                            surface = Color.Black,
+                            surfaceVariant = Color(0xFF121212)
+                        )
+                    } else {
+                        darkColorScheme()
+                    }
+                }
+                else -> lightColorScheme()
+            }
+
+            MaterialTheme(colorScheme = colorScheme) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
                     DysonControllerScreen()
                 }
             }
@@ -84,6 +125,8 @@ class MainActivity : ComponentActivity() {
                 override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
                         val address = gatt.device.address
+                        DysonBluetoothManager.setGattInstance(gatt)
+
                         // Persist MAC address locally
                         val prefs = getSharedPreferences("DysonPrefs", Context.MODE_PRIVATE)
                         prefs.edit().putString("SAVED_ONTRAC_MAC", address).apply()
@@ -92,6 +135,7 @@ class MainActivity : ComponentActivity() {
                         appendLog("ACL/LE Connected ($address). Requesting MTU 251...")
                         gatt.requestMtu(251)
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        DysonBluetoothManager.setGattInstance(null)
                         statusText = "Disconnected"
                         appendLog("Disconnected from GATT server (status=$status)")
                     }
