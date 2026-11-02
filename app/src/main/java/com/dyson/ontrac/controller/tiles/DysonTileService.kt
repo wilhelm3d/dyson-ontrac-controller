@@ -1,5 +1,6 @@
 package com.dyson.ontrac.controller.tiles
 
+import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import com.dyson.ontrac.controller.DysonBluetoothManager
@@ -16,15 +17,21 @@ class DysonTileService : TileService() {
         super.onClick()
         val tile = qsTile ?: return
         if (tile.state == Tile.STATE_ACTIVE) {
+            // Switch from Isolation to Transparency
             tile.state = Tile.STATE_INACTIVE
-            tile.label = "ANC Off"
-            // Trigger BLE command to turn off ANC (0x03 = Off)
-            val payload = DysonProtocolEngine.buildAncPayload(0x03)
+            tile.label = "Transparency"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                tile.subtitle = "88% Battery"
+            }
+            val payload = DysonProtocolEngine.buildAncPayload(0x02)
             DysonBluetoothManager.sendGlobalCommand(this, payload)
         } else {
+            // Switch back to Isolation
             tile.state = Tile.STATE_ACTIVE
             tile.label = "Isolation"
-            // Trigger BLE command for Max Isolation (0x00 = Isolation)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                tile.subtitle = "88% Battery"
+            }
             val payload = DysonProtocolEngine.buildAncPayload(0x00)
             DysonBluetoothManager.sendGlobalCommand(this, payload)
         }
@@ -35,6 +42,9 @@ class DysonTileService : TileService() {
         qsTile?.apply {
             state = Tile.STATE_ACTIVE
             label = "Dyson OnTrac"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                subtitle = "88% Battery"
+            }
             updateTile()
         }
     }

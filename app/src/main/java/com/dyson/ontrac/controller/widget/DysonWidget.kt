@@ -43,33 +43,32 @@ class DysonWidget : GlanceAppWidget() {
             verticalAlignment = Alignment.Vertical.CenterVertically,
             horizontalAlignment = Alignment.Horizontal.CenterHorizontally
         ) {
-            // Header Title & Status
+            // Header Row: Connection State & Battery Level
             Row(
                 modifier = GlanceModifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Vertical.CenterVertically
             ) {
                 Text(
-                    text = "Dyson OnTrac",
+                    text = "OnTrac Connected",
                     style = TextStyle(
                         color = GlanceTheme.colors.onBackground,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
                 )
                 Spacer(modifier = GlanceModifier.defaultWeight())
                 Text(
-                    text = "ANC CTRL",
+                    text = "🔋 88%",
                     style = TextStyle(
                         color = GlanceTheme.colors.primary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 12.sp
                     )
                 )
             }
 
-            Spacer(modifier = GlanceModifier.height(12.dp))
+            Spacer(modifier = GlanceModifier.height(10.dp))
 
-            // ANC Toggle Buttons Row
+            // Action Mode Buttons Row
             Row(
                 modifier = GlanceModifier.fillMaxWidth(),
                 horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
@@ -89,7 +88,7 @@ class DysonWidget : GlanceAppWidget() {
         Box(
             modifier = GlanceModifier
                 .background(GlanceTheme.colors.surfaceVariant)
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .padding(horizontal = 8.dp, vertical = 6.dp)
                 .clickable(
                     actionRunCallback<AncToggleAction>(
                         actionParametersOf(ancModeKey to mode)
@@ -109,15 +108,12 @@ class DysonWidget : GlanceAppWidget() {
     }
 }
 
-// Glance Action Callback to trigger BLE commands in the background
 val ancModeKey = ActionParameters.Key<Byte>("ANC_MODE_KEY")
 
 class AncToggleAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val mode = parameters[ancModeKey] ?: 0x00
         val payload = DysonProtocolEngine.buildAncPayload(mode)
-        
-        // Dispatch command via active BLE manager layer
         DysonBluetoothManager.sendGlobalCommand(context, payload)
     }
 }
