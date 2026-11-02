@@ -333,6 +333,27 @@ class MainActivity : ComponentActivity() {
             }
 
             HorizontalDivider()
+            AudiophileAndAncControls(
+                onApplyTargetCurve = { name, gains ->
+                    band1 = gains[0]
+                    band2 = gains[1]
+                    band3 = gains[2]
+                    band4 = gains[3]
+                    band5 = gains[4]
+                    val payload = DysonProtocolEngine.buildCustomEqPayload(
+                        gains[0].toInt(), gains[1].toInt(), gains[2].toInt(), gains[3].toInt(), gains[4].toInt()
+                    )
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, DysonProtocolEngine.buildPresetEqPayload(0x03), ::appendLog)
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.CUSTOM_EQ_CHAR_UUID, payload, ::appendLog)
+                    appendLog("Applied target curve: $name")
+                },
+                onAncIntensityChanged = { percent ->
+                    val payload = DysonProtocolEngine.buildAncIntensityPayload(percent)
+                    sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload, ::appendLog)
+                }
+            )
+
+            HorizontalDivider()
             HardwareCustomizationPanel { payload ->
                 sendDysonCommand(DysonProtocolEngine.AUDIO_SERVICE_UUID, DysonProtocolEngine.COMMAND_CHAR_UUID, payload, ::appendLog)
             }
@@ -387,6 +408,50 @@ class MainActivity : ComponentActivity() {
                     fontSize = 11.sp,
                     color = Color(0xFF00E676)
                 )
+            }
+        }
+    }
+
+    @Composable
+    fun AudiophileAndAncControls(
+        onApplyTargetCurve: (String, FloatArray) -> Unit,
+        onAncIntensityChanged: (Int) -> Unit
+    ) {
+        var ancIntensity by remember { mutableStateOf(100f) }
+
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(4.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            // --- Fine-Grained ANC Depth Slider ---
+            Text("Fine-Grained ANC Depth: ${ancIntensity.toInt()}%", style = MaterialTheme.typography.labelLarge)
+            Slider(
+                value = ancIntensity,
+                onValueChange = { 
+                    ancIntensity = it
+                    onAncIntensityChanged(it.toInt())
+                },
+                valueRange = 0f..100f,
+                steps = 99,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            HorizontalDivider()
+
+            // --- Target Curve Auto-Calibration ---
+            Text("Target Curve Auto-Calibration", style = MaterialTheme.typography.labelLarge)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                DysonProtocolEngine.targetCurveProfiles.forEach { (profileName, gains) ->
+                    Button(
+                        onClick = { onApplyTargetCurve(profileName, gains) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Text("Apply Profile: $profileName", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    }
+                }
             }
         }
     }

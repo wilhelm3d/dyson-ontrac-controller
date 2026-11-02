@@ -20,6 +20,7 @@ object DysonProtocolEngine {
     // --- Trait Command IDs (on.b) ---
     private const val CMD_ID_ANC: Byte = 10            // 0x0A
     private const val CMD_ID_PRESET_EQ: Byte = 11      // 0x0B
+    private const val CMD_ID_ANC_INTENSITY: Byte = 0x22// ANC depth percentage command
     private const val CMD_ID_WEAR_DETECTION: Byte = 0x41// Sensor toggle / threshold
     private const val CMD_ID_GESTURE_REMAP: Byte = 0x35 // Double-tap/hold action map
 
@@ -31,6 +32,14 @@ object DysonProtocolEngine {
 
     fun buildPresetEqPayload(presetByte: Byte): ByteArray = buildTraitPayload(CMD_ID_PRESET_EQ, presetByte)
 
+    /**
+     * Builds payload for Fine-Grained ANC Intensity Slider (0% to 100%)
+     */
+    fun buildAncIntensityPayload(percent: Int): ByteArray {
+        val clamped = percent.coerceIn(0, 100).toByte()
+        return byteArrayOf(CMD_ID_ANC_INTENSITY, FRAME_MARKER, clamped)
+    }
+
     fun buildCustomEqPayload(band1Db: Int, band2Db: Int, band3Db: Int, band4Db: Int, band5Db: Int): ByteArray {
         return byteArrayOf(
             band1Db.coerceIn(-10, 10).toByte(),
@@ -40,6 +49,16 @@ object DysonProtocolEngine {
             band5Db.coerceIn(-10, 10).toByte()
         )
     }
+
+    /**
+     * Professional Audiophile Target Curve Profiles mapped to 5-band EQ (60Hz, 250Hz, 1kHz, 4kHz, 12kHz)
+     */
+    val targetCurveProfiles = mapOf(
+        "Harman OE (Over-Ear)" to floatArrayOf(4.5f, 2.0f, -0.5f, 3.5f, 5.0f),
+        "Harman AE (Acoustic/In-Ear)" to floatArrayOf(5.0f, 3.0f, 0.0f, 4.0f, 4.5f),
+        "Oratory1990 Reference" to floatArrayOf(2.5f, 1.0f, 0.0f, 2.0f, 3.0f),
+        "Flat Studio Reference" to floatArrayOf(0.0f, 0.0f, 0.0f, 0.0f, 0.0f)
+    )
 
     /**
      * Toggles or tunes wear-detection auto-pause sensor.
