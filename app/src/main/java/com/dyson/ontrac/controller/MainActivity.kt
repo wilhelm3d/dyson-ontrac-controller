@@ -246,7 +246,9 @@ class MainActivity : ComponentActivity() {
                 }
 
                 override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-                    if (characteristic.uuid == DysonBatteryReader.BATTERY_STATUS_CHAR_UUID) {
+                    if (characteristic.uuid == DysonProtocolEngine.COMMAND_CHAR_UUID) {
+                        DysonLogger.i("TRAIT_ACK", "Trait Ack RX -> ${value.toHex()}")
+                    } else if (characteristic.uuid == DysonBatteryReader.BATTERY_STATUS_CHAR_UUID) {
                         val parsedInfo = DysonBatteryReader.parseBatteryPayload(value)
                         DysonLogger.i("BATTERY_NOTIF", parsedInfo)
                     } else {
