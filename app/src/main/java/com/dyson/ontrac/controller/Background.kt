@@ -76,19 +76,31 @@ class AncWidgetProvider : AppWidgetProvider() {
 /** Receives widget button presses, connects if needed, writes the ANC mode. */
 class AncActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION_SET_ANC) return
-        val mode = intent.getIntExtra(EXTRA_MODE, -1)
-        if (mode < 0 || !context.hasBtConnect()) return
-        val result = goAsync()
+        if (!context.hasBtConnect()) return
         val ble = context.dysonApp.ble
-        ble.runWhenReady { ble.setAnc(mode.toByte()) }
+        val action: (() -> Unit)? = when (intent.action) {
+            ACTION_SET_ANC -> {
+                val mode = intent.getIntExtra(EXTRA_MODE, -1)
+                if (mode in 0..5) ({ ble.setAnc(mode.toByte()) }) else null
+            }
+            ACTION_SET_EQ -> {
+                val preset = intent.getIntExtra(EXTRA_PRESET, -1)
+                if (preset in 0..3) ({ ble.setEqMode(preset.toByte()) }) else null
+            }
+            else -> null
+        } ?: return
+        val result = goAsync()
+        ble.runWhenReady { action?.invoke() }
         // keep the process alive long enough to connect and write
         Handler(Looper.getMainLooper()).postDelayed({ result.finish() }, 8000)
     }
 
     companion object {
-        const val ACTION_SET_ANC = "com.dyson.ontrac.controller.SET_ANC"
+        // Tasker / automation: adb shell am broadcast -a com.dyson.ontrac.controller.SET_ANC --ei mode 3
+        const val ACTION_SET_ANC = "com.dyson.ontrac.controller.SET_ANC"   // extra "mode" 0..5
+        const val ACTION_SET_EQ = "com.dyson.ontrac.controller.SET_EQ"     // extra "preset" 0..3
         const val EXTRA_MODE = "mode"
+        const val EXTRA_PRESET = "preset"
     }
 }
 
