@@ -517,10 +517,6 @@ class DysonBleManager(private val context: Context) {
             logLine("Op failed to start")
             busy = false
             pump()
-        } else if (op is Op.Write &&
-            ch.properties and BluetoothGattCharacteristic.PROPERTY_WRITE == 0) {
-            // no-response writes give no callback on some stacks; release shortly
-            mainHandler.postDelayed({ busy = false; pump() }, 80)
         }
     }
 
