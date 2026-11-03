@@ -142,7 +142,7 @@ class SnoopSession(private val context: Context, private val ble: DysonBleManage
     /** Send exactly the bytes the official app sent. */
     fun replay(e: AttEvent): Boolean {
         val uuid = uuidFor(e.handle) ?: return false
-        ble.writeRaw(uuid, e.value)
+        ble.writeRaw(uuid, e.value, noResponse = e.opcode != 0x12)
         return true
     }
 

@@ -49,6 +49,22 @@ class DysonBleManager(private val context: Context, private val store: Store) {
     private val _battery = MutableStateFlow<Int?>(null)
     val battery: StateFlow<Int?> = _battery.asStateFlow()
 
+    /** Latest value (first data byte) of every trait we have heard about. */
+    private val _traits = MutableStateFlow<Map<Int, Int>>(emptyMap())
+    val traits: StateFlow<Map<Int, Int>> = _traits.asStateFlow()
+
+    /** Raw 1 Hz values from 2DD1201D (offset 10 + 12, uint16 LE). Probably mic level dB x10, unconfirmed. */
+    private val _noise = MutableStateFlow<Pair<Int, Int>?>(null)
+    val noise: StateFlow<Pair<Int, Int>?> = _noise.asStateFlow()
+
+    /** Phone/source the headphones report as connected (MAC, name), from `80 74`. */
+    private val _source = MutableStateFlow<Pair<String, String>?>(null)
+    val source: StateFlow<Pair<String, String>?> = _source.asStateFlow()
+
+    /** Last rejected trait SET: trait id + status. */
+    private val _traitError = MutableStateFlow<Pair<Int, Int>?>(null)
+    val traitError: StateFlow<Pair<Int, Int>?> = _traitError.asStateFlow()
+
     /** ATT value handle -> characteristic UUID (Android's instanceId is the ATT handle). Used by the sniffer. */
     private val _handles = MutableStateFlow<Map<Int, UUID>>(emptyMap())
     val handles: StateFlow<Map<Int, UUID>> = _handles.asStateFlow()
@@ -78,7 +94,7 @@ class DysonBleManager(private val context: Context, private val store: Store) {
     }
 
     private sealed class Op(val uuid: UUID) {
-        class Write(uuid: UUID, val data: ByteArray) : Op(uuid)
+        class Write(uuid: UUID, val data: ByteArray, val noResponse: Boolean = false) : Op(uuid)
         class Read(uuid: UUID) : Op(uuid)
         class Subscribe(uuid: UUID) : Op(uuid)
     }
@@ -114,9 +130,12 @@ class DysonBleManager(private val context: Context, private val store: Store) {
         val started: Boolean = when (op) {
             is Op.Read -> gatt.readCharacteristic(ch)
             is Op.Write -> {
-                val type = if (props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0)
-                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                else BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                val canNoRsp = props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+                val canRsp = props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0
+                // The official app uses Write Command (no response) for traits + custom EQ.
+                val type = if ((op.noResponse && canNoRsp) || !canRsp)
+                    BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                 logLine("WRITE ${short(op.uuid)} <- ${hex(op.data)}")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     gatt.writeCharacteristic(ch, op.data, type) == BluetoothStatusCodes.SUCCESS
@@ -153,11 +172,11 @@ class DysonBleManager(private val context: Context, private val store: Store) {
         if (v == null || v.isEmpty()) return
         logLine("  <= ${short(uuid)} ${hex(v)}")
         when (uuid) {
-            DYSON_ANC_MODE_UUID -> {
-                _ancMode.value = v[0].toInt()
-                store.lastAnc = v[0].toInt()
+            DYSON_TRAIT_UUID -> handleTrait(v)
+            DYSON_NOISE_UUID -> if (v.size >= 14) {
+                fun u16(i: Int) = (v[i].toInt() and 0xFF) or ((v[i + 1].toInt() and 0xFF) shl 8)
+                _noise.value = u16(10) to u16(12)
             }
-            DYSON_EQ_MODE_UUID -> _eqMode.value = v[0].toInt()
             DYSON_CUSTOM_EQ_UUID -> if (v.size >= 5) _customEq.value = List(5) { v[it].toInt() }
             DYSON_BATTERY_UUID -> if (v.size >= 2) {
                 val b0 = v[0].toInt() and 0xFF
@@ -168,6 +187,29 @@ class DysonBleManager(private val context: Context, private val store: Store) {
             }
         }
     }
+
+    private fun handleTrait(v: ByteArray) {
+        Trait.parseSource(v)?.let { _source.value = it; return }
+        val m = TraitCodec.parse(v) ?: return
+        when (m.type) {
+            TraitCodec.SET_ACK -> if ((m.status ?: 0) != 0) {
+                logLine("Trait 0x%02X SET rejected, status %d".format(m.trait, m.status))
+                _traitError.value = m.trait to (m.status ?: -1)
+            }
+            TraitCodec.GET_RSP, TraitCodec.NOTIFY -> {
+                if (m.type == TraitCodec.GET_RSP && (m.status ?: 0) != 0) return
+                val value = m.firstByte ?: return
+                _traits.value = _traits.value + (m.trait to value)
+                when (m.trait) {
+                    Trait.ANC_MODE -> { _ancMode.value = value; store.lastAnc = value }
+                    Trait.EQ_PRESET -> _eqMode.value = value
+                }
+            }
+        }
+    }
+
+    private fun sendTrait(frame: ByteArray) =
+        enqueue(Op.Write(DYSON_TRAIT_UUID, frame, noResponse = true))
 
     // --- Connection handling ---
     private fun isOnTrac(name: String?) =
@@ -248,9 +290,16 @@ class DysonBleManager(private val context: Context, private val store: Store) {
             retries = 0
             _connectionState.value = STATE_READY
             onMain {
-                val chars = listOf(DYSON_ANC_MODE_UUID, DYSON_EQ_MODE_UUID, DYSON_CUSTOM_EQ_UUID, DYSON_BATTERY_UUID)
-                chars.forEach { queue.addLast(Op.Subscribe(it)) }   // live updates
-                chars.forEach { queue.addLast(Op.Read(it)) }         // initial state
+                // Trait channel first (ANC, EQ preset, ...), then the plain characteristics.
+                queue.addLast(Op.Subscribe(DYSON_TRAIT_UUID))
+                listOf(DYSON_BATTERY_UUID, DYSON_NOISE_UUID, DYSON_CUSTOM_EQ_UUID)
+                    .forEach { queue.addLast(Op.Subscribe(it)) }
+                Trait.STARTUP.forEach { t ->
+                    queue.addLast(Op.Write(DYSON_TRAIT_UUID, TraitCodec.subscribe(t), noResponse = true))
+                    queue.addLast(Op.Write(DYSON_TRAIT_UUID, TraitCodec.get(t), noResponse = true))
+                }
+                queue.addLast(Op.Write(DYSON_TRAIT_UUID, Trait.REQUEST_SOURCE, noResponse = true))
+                listOf(DYSON_BATTERY_UUID, DYSON_CUSTOM_EQ_UUID).forEach { queue.addLast(Op.Read(it)) }
                 pump()
                 val actions = pendingActions.toList()
                 pendingActions.clear()
@@ -369,24 +418,41 @@ class DysonBleManager(private val context: Context, private val store: Store) {
     fun setAnc(mode: Byte) {
         _ancMode.value = mode.toInt()
         store.lastAnc = mode.toInt()
-        enqueue(Op.Write(DYSON_ANC_MODE_UUID, byteArrayOf(mode)))
-        enqueue(Op.Read(DYSON_ANC_MODE_UUID))   // confirm what the headphones actually did
+        // headphones confirm with SET_ACK + NOTIFY, which updates ancMode again
+        sendTrait(TraitCodec.set(Trait.ANC_MODE, mode.toInt()))
     }
 
     fun setEqMode(mode: Byte) {
         _eqMode.value = mode.toInt()
-        enqueue(Op.Write(DYSON_EQ_MODE_UUID, byteArrayOf(mode)))
+        sendTrait(TraitCodec.set(Trait.EQ_PRESET, mode.toInt()))
     }
 
-    // Custom 5-band EQ: five signed bytes (lp/e.java)
+    /**
+     * Which variant Isolation / Transparency use.
+     * isolation: 1 = medium quiet, 2 = full;  transparency: 1 = medium loud, 2 = full;  null = leave unchanged.
+     */
+    fun setAncLevels(isolation: Int? = null, transparency: Int? = null) {
+        val v = ((transparency ?: 0) shl 4) or (isolation ?: 0)
+        if (v != 0) sendTrait(TraitCodec.set(Trait.ANC_LEVELS, v))
+    }
+
+    /** 0 = auto (pause when taken off), 1 = always worn, 2 = always unworn. Untested write, read is confirmed. */
+    fun setWearDetection(mode: Int) = sendTrait(TraitCodec.set(Trait.WEAR_DETECTION, mode))
+
+    /** Generic trait write for experiments. */
+    fun setTrait(trait: Int, vararg data: Int) = sendTrait(TraitCodec.set(trait, *data))
+
+    // Custom 5-band EQ: five signed bytes on 2DD12007, Write Command like the official app.
+    // The official app only produced -3..+3 in the capture; larger values are untested.
     fun sendCustomEq(dbValues: List<Int>) {
         store.lastEq = dbValues
-        enqueue(Op.Write(DYSON_CUSTOM_EQ_UUID, ByteArray(5) { dbValues[it].toByte() }))
+        enqueue(Op.Write(DYSON_CUSTOM_EQ_UUID, ByteArray(5) { dbValues[it].toByte() }, noResponse = true))
+        enqueue(Op.Read(DYSON_CUSTOM_EQ_UUID))   // read back: shows if the headphones clipped the values
     }
 
     /** Write raw bytes to any characteristic (used to replay sniffed commands). */
-    fun writeRaw(uuid: UUID, data: ByteArray) {
-        enqueue(Op.Write(uuid, data))
+    fun writeRaw(uuid: UUID, data: ByteArray, noResponse: Boolean = true) {
+        enqueue(Op.Write(uuid, data, noResponse))
     }
 
     fun disconnect() {

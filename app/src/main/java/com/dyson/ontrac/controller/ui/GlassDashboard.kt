@@ -54,7 +54,10 @@ import com.dyson.ontrac.controller.ANC_OFF
 import com.dyson.ontrac.controller.ANC_TRANSPARENCY
 import com.dyson.ontrac.controller.AncIcon
 import com.dyson.ontrac.controller.DysonBleManager
+import com.dyson.ontrac.controller.EQ_MAX_DB
 import com.dyson.ontrac.controller.EQ_MODE_CUSTOM
+import com.dyson.ontrac.controller.Trait
+import com.dyson.ontrac.controller.eqPresetName
 import com.dyson.ontrac.controller.STATE_READY
 import com.dyson.ontrac.controller.Store
 import com.dyson.ontrac.controller.ancName
@@ -62,11 +65,9 @@ import com.dyson.ontrac.controller.ui.theme.Glass
 import com.dyson.ontrac.controller.ui.theme.ancAura
 
 private val MAIN_MODES = listOf(ANC_ISOLATION.toInt(), ANC_TRANSPARENCY.toInt(), ANC_OFF.toInt())
-private val FINE_MODES = listOf(
-    "Quiet" to ANC_MEDIUM_QUIET.toInt(),
-    "Conversation" to ANC_CONVERSATION.toInt(),
-    "Loud" to ANC_MEDIUM_LOUD.toInt()
-)
+private val LEVEL_LABELS = listOf("Medium", "Full")   // trait 0x22 nibble values 1, 2
+private val EQ_PRESETS = listOf(0, 1, 2, 3)             // enhanced, bass boost, neutral, custom
+private val WEAR_LABELS = listOf("Auto", "Always worn", "Never worn")
 private val EQ_LABELS = listOf("Bass", "Low", "Mid", "High", "Treble")
 
 /** Black-mode / liquid-glass dashboard. Same data + actions as the old DashboardScreen. */
@@ -83,6 +84,10 @@ fun GlassDashboard(
     val customEqNow by ble.customEq.collectAsState()
     val battery by ble.battery.collectAsState()
     val logLines by ble.log.collectAsState()
+    val traits by ble.traits.collectAsState()
+    val noise by ble.noise.collectAsState()
+    val traitError by ble.traitError.collectAsState()
+    val source by ble.source.collectAsState()
     val isReady = connectionState == STATE_READY
     val haptics = LocalHapticFeedback.current
 
@@ -131,7 +136,12 @@ fun GlassDashboard(
             GlassCard(title = "Noise control") {
                 GlassSegmented(
                     options = listOf("Isolation", "Transparency", "Off"),
-                    selected = MAIN_MODES.indexOf(currentAnc),
+                    selected = when (currentAnc) {
+                        ANC_ISOLATION.toInt(), ANC_MEDIUM_QUIET.toInt() -> 0
+                        ANC_TRANSPARENCY.toInt(), ANC_MEDIUM_LOUD.toInt(), ANC_CONVERSATION.toInt() -> 1
+                        ANC_OFF.toInt() -> 2
+                        else -> -1
+                    },
                     enabled = isReady,
                     height = 84.dp,
                     onSelect = {
@@ -141,16 +151,17 @@ fun GlassDashboard(
                     icon = { i, tint -> AncIcon(kind = i, color = tint) }
                 )
                 Spacer(Modifier.height(10.dp))
-                GlassSegmented(
-                    options = FINE_MODES.map { it.first },
-                    selected = FINE_MODES.indexOfFirst { it.second == currentAnc },
-                    enabled = isReady,
-                    height = 40.dp,
-                    onSelect = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        ble.setAnc(FINE_MODES[it].second.toByte())
-                    }
-                )
+                // Trait 0x22: low nibble = isolation level, high nibble = transparency level
+                val levels = traits[Trait.ANC_LEVELS]
+                LevelRow("Isolation", levels?.and(0x0F), isReady) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    ble.setAncLevels(isolation = it)
+                }
+                Spacer(Modifier.height(8.dp))
+                LevelRow("Transparency", levels?.shr(4)?.and(0x0F), isReady) {
+                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    ble.setAncLevels(transparency = it)
+                }
                 Spacer(Modifier.height(12.dp))
                 Text(
                     ancName(currentAnc) + (if (isReady) "" else "  ·  last known"),
@@ -176,9 +187,18 @@ fun GlassDashboard(
                     }
                 }
             ) {
-                Text("Headphone EQ mode: ${eqModeNow ?: "?"}", color = Glass.TextTertiary, fontSize = 12.sp)
-                Spacer(Modifier.height(10.dp))
-                EqCurve(eqValues, accent, Modifier.fillMaxWidth().height(56.dp))
+                GlassSegmented(
+                    options = EQ_PRESETS.map { eqPresetName(it) },
+                    selected = EQ_PRESETS.indexOf(eqModeNow),
+                    enabled = isReady,
+                    height = 40.dp,
+                    onSelect = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        ble.setEqMode(EQ_PRESETS[it].toByte())
+                    }
+                )
+                Spacer(Modifier.height(12.dp))
+                EqCurve(eqValues, accent, Modifier.fillMaxWidth().height(56.dp), rangeDb = EQ_MAX_DB)
                 Spacer(Modifier.height(6.dp))
                 Row(Modifier.fillMaxWidth().height(220.dp)) {
                     eqValues.forEachIndexed { index, v ->
@@ -187,6 +207,8 @@ fun GlassDashboard(
                             label = EQ_LABELS.getOrElse(index) { "" },
                             accent = accent,
                             enabled = true,
+                            minDb = -EQ_MAX_DB,
+                            maxDb = EQ_MAX_DB,
                             modifier = Modifier.weight(1f),
                             onValueChange = { nv ->
                                 if (nv != eqValues[index]) {
@@ -206,6 +228,46 @@ fun GlassDashboard(
                     profiles.forEach { (name, vals) ->
                         GlassChip(name, active = vals == eqValues) { eqValues = vals }
                     }
+                }
+            }
+
+            // --- Headphones (traits) --------------------------------------------
+            GlassCard(title = "Headphones") {
+                Text("Wear detection", color = Glass.TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(8.dp))
+                GlassSegmented(
+                    options = WEAR_LABELS,
+                    selected = traits[Trait.WEAR_DETECTION] ?: -1,
+                    enabled = isReady,
+                    height = 40.dp,
+                    onSelect = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        ble.setWearDetection(it)
+                    }
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Auto = pause when taken off. Always worn = never pause.",
+                    color = Glass.TextTertiary, fontSize = 11.sp
+                )
+                Spacer(Modifier.height(14.dp))
+                InfoRow("Battery state", when (traits[Trait.BATTERY_STATE]) {
+                    0 -> "Full"; 1 -> "Normal"; 2 -> "Low"; 3 -> "Insufficient"; 4 -> "Critical"; 5 -> "Shutdown"; else -> "–"
+                })
+                InfoRow("Ear cushions", when (traits[Trait.EAR_CUSHIONS]) {
+                    0 -> "Both missing"; 1 -> "Left missing"; 2 -> "Right missing"; 3 -> "Fitted"; else -> "–"
+                })
+                InfoRow("Source device", source?.let { (mac, name) -> "$name  ·  …${mac.takeLast(5)}" } ?: "–")
+                InfoRow("Audio", when (traits[Trait.AUDIO_STATE]) {
+                    0 -> "Idle"; 1 -> "Playing"; 2 -> "Paused"; 3 -> "Call"; else -> "–"
+                })
+                InfoRow(
+                    "Mic level L / R (raw ÷10, unconfirmed)",
+                    noise?.let { (l, r) -> "%.1f / %.1f".format(l / 10f, r / 10f) } ?: "–"
+                )
+                traitError?.let { (t, st) ->
+                    Spacer(Modifier.height(6.dp))
+                    Text("Headphones rejected setting 0x%02X (status %d)".format(t, st), color = Glass.Danger, fontSize = 12.sp)
                 }
             }
 
@@ -337,5 +399,28 @@ private fun StatusPill(state: String, isReady: Boolean) {
             color = Glass.TextSecondary, fontSize = 12.sp,
             maxLines = 1, overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+private fun LevelRow(label: String, value: Int?, enabled: Boolean, onSet: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Glass.TextSecondary, fontSize = 13.sp, modifier = Modifier.width(96.dp))
+        GlassSegmented(
+            options = LEVEL_LABELS,
+            selected = if (value == null) -1 else value - 1,
+            enabled = enabled,
+            height = 38.dp,
+            onSelect = { onSet(it + 1) },
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun InfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = Glass.TextSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Text(value, color = Glass.TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }
