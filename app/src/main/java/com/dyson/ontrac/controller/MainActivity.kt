@@ -15,9 +15,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,9 +32,11 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -37,6 +44,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.roundToInt
 
 // --- UUIDs & Command Definitions extracted from Dyson APK ---
@@ -58,11 +68,14 @@ const val ANC_OFF: Byte = 3
 // EQ mode value for "custom" is a guess; check the log output of the EQ_MODE read.
 const val EQ_MODE_CUSTOM: Byte = 3
 
-// Nothing Style Colors
-val NothingBlack = Color(0xFF000000)
-val NothingWhite = Color(0xFFFFFFFF)
-val NothingRed = Color(0xFFEA3323)
-val NothingGray = Color(0xFF333333)
+// --- Palette (dark, rounded cards, purple accent) ---
+val AppBg = Color(0xFF0B0B0C)
+val CardBg = Color(0xFF1C1C1E)
+val TrackBg = Color(0xFF2C2C2E)
+val TextPrimary = Color(0xFFFFFFFF)
+val TextSecondary = Color(0xFF9A9AA0)
+val Accent = Color(0xFF7C5CFF)
+val StatusBlue = Color(0xFF3FA2F7)
 
 class MainActivity : ComponentActivity() {
 
@@ -87,7 +100,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = NothingBlack
+                    color = AppBg
                 ) {
                     DashboardScreen(bleManager) { requestBlePermissions() }
                 }
@@ -124,242 +137,314 @@ class MainActivity : ComponentActivity() {
 fun DashboardScreen(bleManager: DysonBleManager, onScanClick: () -> Unit) {
     val connectionState by bleManager.connectionState.collectAsState()
     val logLines by bleManager.log.collectAsState()
-    
-    // The mapped 5-band compromise of your 6-band profile
-    // Original Band 1 (+2.5dB) -> Bass: +3
-    // Original Band 2 (-2.0dB) -> MidBass: -2
-    // Original Band 3 (+1.5dB) -> Mid: +1
-    // Original Band 4 (-2.5dB) -> MidTreble: -2
-    // Orig Band 5 (-5.5dB) & 6 (+4.0dB) -> Treble: -2 (Compromise to tame sibilance)
+    val isReady = connectionState == "Ready to send commands"
+
+    // 5-band mapping of the 6-band profile
     var eqValues by remember { mutableStateOf(listOf(3, -2, 1, -2, -2)) }
+    var ancSelected by remember { mutableStateOf(0) }
+    var showLog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Spacer(modifier = Modifier.height(30.dp))
-        
+        Spacer(Modifier.height(24.dp))
         Text(
-            text = "ONTRAC CTRL",
-            color = NothingWhite,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 2.sp
+            "OnTrac Control",
+            color = TextPrimary,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
         )
 
-        // Status Indicator
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (connectionState.contains("Ready")) NothingRed else NothingGray)
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
-        ) {
+        // Status chips
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(CardBg),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (isReady) StatusBlue else TextSecondary)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (isReady) "Connected" else connectionState,
+                    color = TextPrimary, fontSize = 13.sp, maxLines = 1
+                )
+            }
+            val canConnect = connectionState == "Disconnected" || connectionState.contains("Failed")
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(if (canConnect) Accent else CardBg)
+                    .clickable(enabled = canConnect) { onScanClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Connect",
+                    color = if (canConnect) TextPrimary else TextSecondary,
+                    fontSize = 14.sp, fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        // Noise cancellation
+        DysonCard(title = "Noise cancellation") {
+            val labels = listOf("Isolation", "Transparency", "Off")
+            val modes = listOf(ANC_ISOLATION, ANC_TRANSPARENCY, ANC_OFF)
+            PillSelector(
+                count = 3,
+                selected = ancSelected,
+                enabled = isReady,
+                onSelect = {
+                    ancSelected = it
+                    bleManager.setAnc(modes[it])
+                }
+            ) { index, tint -> AncIcon(kind = index, color = tint) }
+            Spacer(Modifier.height(10.dp))
             Text(
-                text = connectionState.uppercase(),
-                color = NothingWhite,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold
+                labels[ancSelected],
+                color = TextSecondary, fontSize = 13.sp,
+                modifier = Modifier.padding(start = 6.dp)
             )
         }
 
-        Button(
-            onClick = onScanClick,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(0.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = NothingWhite, contentColor = NothingBlack),
-            enabled = connectionState == "Disconnected" || connectionState.contains("Failed")
-        ) {
-            Text("CONNECT", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-        }
-
-        // ANC Controls
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Text("NOISE CONTROL", color = NothingWhite, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-            Spacer(modifier = Modifier.height(8.dp))
-            val isReady = connectionState == "Ready to send commands"
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedButton(
-                    onClick = { bleManager.setAnc(ANC_ISOLATION) },
-                    enabled = isReady,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f)
-                ) { Text("ANC", fontFamily = FontFamily.Monospace, color = NothingWhite) }
-
-                OutlinedButton(
-                    onClick = { bleManager.setAnc(ANC_TRANSPARENCY) },
-                    enabled = isReady,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f)
-                ) { Text("TRANS", fontFamily = FontFamily.Monospace, color = NothingWhite) }
-
-                OutlinedButton(
-                    onClick = { bleManager.setAnc(ANC_OFF) },
-                    enabled = isReady,
-                    shape = RoundedCornerShape(0.dp),
-                    modifier = Modifier.weight(1f)
-                ) { Text("OFF", fontFamily = FontFamily.Monospace, color = NothingWhite) }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Equalizer UI
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("EQUALIZER (CUSTOM)", color = NothingWhite, fontFamily = FontFamily.Monospace, fontSize = 14.sp)
-                Button(
-                    onClick = { 
-                        // Queue: upload the 5 bands, then switch EQ mode to custom
-                        bleManager.sendCustomEq(eqValues)
-                        bleManager.setEqMode(EQ_MODE_CUSTOM)
-                    },
-                    enabled = connectionState == "Ready to send commands",
-                    shape = RoundedCornerShape(0.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = NothingRed, contentColor = NothingWhite),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    modifier = Modifier.height(32.dp)
+        // Equaliser
+        DysonCard(
+            title = "Equaliser",
+            trailing = {
+                Box(
+                    modifier = Modifier
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(17.dp))
+                        .background(if (isReady) Accent else TrackBg)
+                        .clickable(enabled = isReady) {
+                            bleManager.sendCustomEq(eqValues)
+                            bleManager.setEqMode(EQ_MODE_CUSTOM)
+                        }
+                        .padding(horizontal = 18.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Text("APPLY", fontFamily = FontFamily.Monospace, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("Apply", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 }
             }
-            
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 5 Band Slider Array
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp),
+                    .height(210.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                val labels = listOf("BASS", "M-BAS", "MID", "M-TRB", "TRB")
+                val labels = listOf("Bass", "Low mid", "Mid", "High mid", "Treble")
                 eqValues.forEachIndexed { index, value ->
-                    NothingVerticalSlider(
+                    EqSlider(
                         value = value,
                         label = labels[index],
                         onValueChange = { newVal ->
-                            val mut = eqValues.toMutableList()
-                            mut[index] = newVal
-                            eqValues = mut
+                            eqValues = eqValues.toMutableList().also { it[index] = newVal }
                         }
                     )
                 }
             }
         }
 
-        // On-screen BLE log (service dump, write results)
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f, fill = false)
-                .background(NothingGray)
-                .padding(8.dp)
+        // Debug log (collapsible)
+        DysonCard(
+            title = "Connection log",
+            trailing = {
+                Text(
+                    if (showLog) "Hide" else "Show",
+                    color = Accent, fontSize = 13.sp,
+                    modifier = Modifier.clickable { showLog = !showLog }
+                )
+            }
         ) {
-            logLines.takeLast(14).forEach {
-                Text(it, color = NothingWhite, fontFamily = FontFamily.Monospace, fontSize = 9.sp)
+            if (showLog) {
+                logLines.takeLast(16).forEach {
+                    Text(it, color = TextSecondary, fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+fun DysonCard(
+    title: String,
+    trailing: @Composable () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(CardBg)
+            .padding(20.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Medium)
+            trailing()
+        }
+        Spacer(Modifier.height(16.dp))
+        content()
+    }
+}
+
+// Pill track with a white circle on the active option
+@Composable
+fun PillSelector(
+    count: Int,
+    selected: Int,
+    enabled: Boolean,
+    onSelect: (Int) -> Unit,
+    icon: @Composable (Int, Color) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(TrackBg)
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        repeat(count) { i ->
+            val active = i == selected
+            Box(
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CircleShape)
+                    .background(if (active) TextPrimary else Color.Transparent)
+                    .clickable(enabled = enabled) { onSelect(i) },
+                contentAlignment = Alignment.Center
+            ) {
+                icon(i, if (active) Color.Black else if (enabled) TextPrimary else TextSecondary)
             }
         }
     }
 }
 
-// Minimalist Vertical Slider mimicking the "Nothing" brand aesthetics
+// Simple line icons: 0 = isolation, 1 = transparency, 2 = off
 @Composable
-fun NothingVerticalSlider(
-    value: Int,
-    label: String,
-    onValueChange: (Int) -> Unit
-) {
-    // Range is typically -10 to +10 dB for firmware DSPs.
+fun AncIcon(kind: Int, color: Color) {
+    Canvas(modifier = Modifier.size(28.dp)) {
+        val c = center
+        val sw = 2.dp.toPx()
+        val r = size.minDimension * 0.34f
+        when (kind) {
+            0 -> {
+                drawCircle(color, r, c, style = Stroke(sw))
+                drawCircle(color, r * 0.32f, Offset(c.x, c.y - r * 0.2f), style = Stroke(sw))
+                drawArc(
+                    color, 200f, 140f, false,
+                    topLeft = Offset(c.x - r * 0.6f, c.y + r * 0.05f),
+                    size = Size(r * 1.2f, r * 1.0f),
+                    style = Stroke(sw)
+                )
+            }
+            1 -> {
+                drawCircle(color, r * 0.4f, c, style = Stroke(sw))
+                for (i in 0 until 8) {
+                    val a = i * (PI / 4).toFloat()
+                    drawLine(
+                        color,
+                        Offset(c.x + cos(a) * r * 0.75f, c.y + sin(a) * r * 0.75f),
+                        Offset(c.x + cos(a) * r * 1.1f, c.y + sin(a) * r * 1.1f),
+                        sw
+                    )
+                }
+            }
+            else -> {
+                drawCircle(color, r, c, style = Stroke(sw))
+                drawLine(
+                    color,
+                    Offset(c.x - r * 1.2f, c.y + r * 1.2f),
+                    Offset(c.x + r * 1.2f, c.y - r * 1.2f),
+                    sw
+                )
+            }
+        }
+    }
+}
+
+// Vertical EQ slider: purple fill from the zero line, white handle
+@Composable
+fun EqSlider(value: Int, label: String, onValueChange: (Int) -> Unit) {
     val minDb = -10
     val maxDb = 10
-    
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxHeight()
     ) {
         Text(
             text = "${if (value > 0) "+" else ""}$value",
-            color = NothingWhite,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
+            color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium
         )
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
+        Spacer(Modifier.height(8.dp))
         Box(
             modifier = Modifier
                 .weight(1f)
-                .width(40.dp)
+                .width(44.dp)
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
+                    detectDragGestures { change, _ ->
                         change.consume()
-                        // rough calculation for drag 
-                        val step = size.height / (maxDb - minDb)
-                        val delta = (dragAmount.y / step).roundToInt()
-                        val newVal = (value - delta).coerceIn(minDb, maxDb)
-                        onValueChange(newVal)
+                        val frac = (change.position.y / size.height).coerceIn(0f, 1f)
+                        onValueChange((maxDb - frac * (maxDb - minDb)).roundToInt())
+                    }
+                }
+                .pointerInput(Unit) {
+                    detectTapGestures { pos ->
+                        val frac = (pos.y / size.height).coerceIn(0f, 1f)
+                        onValueChange((maxDb - frac * (maxDb - minDb)).roundToInt())
                     }
                 }
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val trackWidth = 4.dp.toPx()
-                val sliderHeight = 12.dp.toPx()
+                val trackW = 6.dp.toPx()
+                val x = (size.width - trackW) / 2f
                 val centerY = size.height / 2f
-                
-                // Draw Track
+                val handleR = 11.dp.toPx()
+                val frac = 1f - (value - minDb).toFloat() / (maxDb - minDb)
+                val handleY = (frac * size.height).coerceIn(handleR, size.height - handleR)
+
                 drawRoundRect(
-                    color = NothingGray,
-                    topLeft = Offset((size.width - trackWidth) / 2f, 0f),
-                    size = Size(trackWidth, size.height),
-                    cornerRadius = CornerRadius(trackWidth/2, trackWidth/2)
+                    TrackBg, Offset(x, 0f), Size(trackW, size.height),
+                    CornerRadius(trackW / 2, trackW / 2)
                 )
-                
-                // Draw Zero Line
+                val top = minOf(handleY, centerY)
+                val bottom = maxOf(handleY, centerY)
+                drawRoundRect(
+                    Accent, Offset(x, top), Size(trackW, bottom - top),
+                    CornerRadius(trackW / 2, trackW / 2)
+                )
                 drawLine(
-                    color = NothingWhite.copy(alpha = 0.5f),
-                    start = Offset(0f, centerY),
-                    end = Offset(size.width, centerY),
-                    strokeWidth = 2.dp.toPx()
+                    TextSecondary.copy(alpha = 0.5f),
+                    Offset(x - 6.dp.toPx(), centerY), Offset(x + trackW + 6.dp.toPx(), centerY),
+                    1.dp.toPx()
                 )
-                
-                // Calculate Handle Position
-                val range = maxDb - minDb
-                val percentage = 1f - ((value - minDb).toFloat() / range.toFloat())
-                val handleY = (percentage * size.height).coerceIn(sliderHeight/2, size.height - sliderHeight/2)
-                
-                // Draw Handle
-                drawRoundRect(
-                    color = NothingRed,
-                    topLeft = Offset(4.dp.toPx(), handleY - sliderHeight / 2f),
-                    size = Size(size.width - 8.dp.toPx(), sliderHeight),
-                    cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
-                )
+                drawCircle(TextPrimary, handleR, Offset(size.width / 2f, handleY))
             }
         }
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            text = label,
-            color = NothingWhite.copy(alpha = 0.6f),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp
-        )
+        Spacer(Modifier.height(8.dp))
+        Text(label, color = TextSecondary, fontSize = 11.sp)
     }
 }
 
